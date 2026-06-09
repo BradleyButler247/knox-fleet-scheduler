@@ -97,7 +97,7 @@ export function DaySchedule({
                         variant="outline"
                         className={`whitespace-nowrap ${workColorClass(job.work)} ${job.completed ? "line-through opacity-70" : ""}`}
                       >
-                        {job.work}
+                        {job.work}{job.color ? ` — ${job.color}` : ""}
                       </Badge>
                       {job.completed && (
                         <Badge variant="secondary" className="gap-1 whitespace-nowrap">

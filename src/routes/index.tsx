@@ -12,12 +12,13 @@ import { Button } from "@/components/ui/button";
 import { ResizablePanelGroup, ResizablePanel, ResizableHandle } from "@/components/ui/resizable";
 import { Toaster } from "@/components/ui/sonner";
 import { Badge } from "@/components/ui/badge";
-import { Paintbrush, Plus, ArrowLeft, CalendarDays, ListChecks, Truck, ChevronLeft, ChevronRight } from "lucide-react";
+import { Paintbrush, Plus, ArrowLeft, CalendarDays, ListChecks, Truck, ChevronLeft, ChevronRight, LayoutGrid } from "lucide-react";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScheduleForm } from "@/components/ScheduleForm";
 import { DaySchedule } from "@/components/DaySchedule";
 import { MonthCalendar } from "@/components/MonthCalendar";
 import { TruckSchedule } from "@/components/TruckSchedule";
+import { BayGrid } from "@/components/BayGrid";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useJobs, toDateKey } from "@/lib/schedule-store";
 
@@ -102,14 +103,17 @@ function Index() {
       </header>
 
       {/* Desktop */}
-      <main className="mx-auto hidden w-full px-6 py-8 lg:block">
-        <Tabs defaultValue="calendar" className="w-full">
-          <TabsList className="grid w-full max-w-md grid-cols-2">
-            <TabsTrigger value="calendar" className="gap-2">
-              <CalendarDays className="h-4 w-4" /> By Day
+      <main className="mx-auto hidden w-full px-6 py-6 lg:block">
+        <Tabs defaultValue="bay" className="w-full">
+          <TabsList className="grid w-full max-w-lg grid-cols-3">
+            <TabsTrigger value="bay" className="gap-2">
+              <LayoutGrid className="h-4 w-4" /> By Bay
             </TabsTrigger>
             <TabsTrigger value="truck" className="gap-2">
               <Truck className="h-4 w-4" /> By Truck
+            </TabsTrigger>
+            <TabsTrigger value="calendar" className="gap-2">
+              <CalendarDays className="h-4 w-4" /> By Day
             </TabsTrigger>
           </TabsList>
 
@@ -225,11 +229,11 @@ function Index() {
                 <ResizablePanelGroup className="min-h-[600px] w-full overflow-hidden">
                   <ResizablePanel
                     panelRef={calendarPanelRef}
-                    defaultSize={70}
+                    defaultSize={67}
                     minSize="20rem"
                     collapsible
                     collapsedSize="3rem"
-                    id="calendar-panel"
+                    id="calendar-panel-v2"
                     className="pr-3"
                     onResize={() => {
                       const c = calendarPanelRef.current?.isCollapsed() ?? false;
@@ -251,11 +255,11 @@ function Index() {
                   <ResizableHandle withHandle className="mx-1.5 bg-transparent" />
                   <ResizablePanel
                     panelRef={dayPanelRef}
-                    defaultSize={30}
+                    defaultSize={33}
                     minSize="18rem"
                     collapsible
                     collapsedSize="3rem"
-                    id="day-panel"
+                    id="day-panel-v2"
                     className="pl-3"
                     onResize={() => {
                       const c = dayPanelRef.current?.isCollapsed() ?? false;
@@ -279,12 +283,19 @@ function Index() {
             })()}
           </TabsContent>
 
+          <TabsContent value="bay" className="mt-4">
+            <Card className="min-h-[calc(100dvh-13rem)]">
+              <CardContent className="pt-6 h-full">
+                <BayGrid date={today} jobs={jobs} showCompany />
+              </CardContent>
+            </Card>
+          </TabsContent>
 
 
           <TabsContent value="truck" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} />
+                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -293,18 +304,28 @@ function Index() {
 
       {/* Mobile / tablet: tabs */}
       <main className="mx-auto max-w-2xl px-4 py-6 lg:hidden">
-        <Tabs defaultValue="calendar" className="w-full">
-          <TabsList className="grid w-full grid-cols-1 h-auto sm:grid-cols-3">
-            <TabsTrigger value="calendar" className="gap-2">
-              <CalendarDays className="h-4 w-4" /> Calendar
-            </TabsTrigger>
-            <TabsTrigger value="today" className="gap-2">
-              <ListChecks className="h-4 w-4" /> Today
+        <Tabs defaultValue="bay" className="w-full">
+          <TabsList className="grid w-full grid-cols-2 h-auto sm:grid-cols-4">
+            <TabsTrigger value="bay" className="gap-2">
+              <LayoutGrid className="h-4 w-4" /> By Bay
             </TabsTrigger>
             <TabsTrigger value="truck" className="gap-2">
               <Truck className="h-4 w-4" /> By Truck
             </TabsTrigger>
+            <TabsTrigger value="today" className="gap-2">
+              <ListChecks className="h-4 w-4" /> By Day
+            </TabsTrigger>
+            <TabsTrigger value="calendar" className="gap-2">
+              <CalendarDays className="h-4 w-4" /> Calendar
+            </TabsTrigger>
           </TabsList>
+          <TabsContent value="bay" className="mt-4">
+            <Card>
+              <CardContent className="pt-6">
+                <BayGrid date={today} jobs={jobs} />
+              </CardContent>
+            </Card>
+          </TabsContent>
           <TabsContent value="calendar" className="mt-4">
             <Card>
               <CardContent className="pt-6">
@@ -349,7 +370,7 @@ function Index() {
           <TabsContent value="truck" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} />
+                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} />
               </CardContent>
             </Card>
           </TabsContent>

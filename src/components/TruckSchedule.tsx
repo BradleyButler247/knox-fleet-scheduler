@@ -32,6 +32,8 @@ import { ScheduleForm } from "@/components/ScheduleForm";
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { toDateKey, type Job, type Shift } from "@/lib/schedule-store";
+import { useTruckStatus } from "@/lib/truck-status-store";
+import { Checkbox } from "@/components/ui/checkbox";
 
 function workColorClass(work: string) {
   switch (work) {
@@ -68,6 +70,7 @@ type WeekItem = {
   work: string;
   employee: string;
   shift: Shift;
+  color?: string;
 };
 
 function WeekGrid({
@@ -165,6 +168,7 @@ function WeekGrid({
                       </div>
                       <p className={`mt-0.5 line-clamp-2 pr-3 rounded px-1 py-0.5 ${workColorClass(item.work)}`}>
                         {item.work}
+                        {item.color ? ` — ${item.color}` : ""}
                       </p>
                       <div className="mt-0.5 flex items-center gap-1 text-muted-foreground">
                         <User className="h-3 w-3" />
@@ -246,8 +250,18 @@ function TruckWeekView({
 
 type PendingJob = WeekItem & { date: string };
 
-const BAYS = ["Bay 1", "Bay 2", "Bay 3", "Bay 4", "Bay 5"];
-const WORK_OPTIONS = ["Assembly", "Disassembly", "Sandblast", "Sanding", "Paint", "Other"] as const;
+const BAYS = [
+  "Sandblast Area",
+  "Outhouse",
+  "Yard",
+  "Bay 1",
+  "Bay 2",
+  "Bay 3",
+  "Bay 4",
+  "Paint Booth 1",
+  "Paint Booth 2",
+];
+const WORK_OPTIONS = ["Assembly", "Check-in", "Disassembly", "Other", "Paint", "Sandblast", "Sanding", "Touchups"] as const;
 
 function PendingJobForm({
   date,
@@ -263,6 +277,7 @@ function PendingJobForm({
   const [bay, setBay] = useState(BAYS[0]);
   const [employee, setEmployee] = useState("");
   const [shift, setShift] = useState<Shift>("ALL_DAY");
+  const [color, setColor] = useState("");
   const resolvedWork = workType === "Other" ? workOther.trim() : workType;
 
   return (
@@ -323,6 +338,17 @@ function PendingJobForm({
           />
         )}
       </div>
+      {workType === "Paint" && (
+        <div className="space-y-1.5">
+          <Label htmlFor="paint-color">Color</Label>
+          <Input
+            id="paint-color"
+            placeholder="e.g. Fleet White, PMS 286"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+          />
+        </div>
+      )}
       <div className="space-y-1.5">
         <Label>Shift</Label>
         <ToggleGroup
@@ -349,8 +375,8 @@ function PendingJobForm({
         <Button
           type="button"
           onClick={() => {
-            if (!resolvedWork || !employee.trim()) {
-              toast.error("Fill in work and employee");
+            if (!resolvedWork) {
+              toast.error("Select work to be done");
               return;
             }
             onAdd({
@@ -358,6 +384,7 @@ function PendingJobForm({
               bay,
               employee: employee.trim(),
               shift,
+              ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
             });
           }}
         >
@@ -490,24 +517,34 @@ function MobileTaskRows({
                   className="mt-2"
                 />
               )}
+              {row.work === "Paint" && (
+                <Input
+                  placeholder="Color (e.g. Fleet White)"
+                  value={row.color ?? ""}
+                  onChange={(e) => updateRow(row.id, { color: e.target.value })}
+                  className="mt-2"
+                />
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>Bay #{workType === "Other" ? " (optional)" : ""}</Label>
-                <Input
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  step={1}
-                  placeholder="-- Please enter a bay # --"
-                  value={row.bay}
-                  onChange={(e) =>
-                    updateRow(row.id, {
-                      bay: e.target.value.replace(/\D/g, ""),
-                    })
-                  }
-                />
+                <Label>Bay{workType === "Other" ? " (optional)" : ""}</Label>
+                <Select
+                  value={row.bay || undefined}
+                  onValueChange={(v) => updateRow(row.id, { bay: v })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="-- Select bay --" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {BAYS.map((b) => (
+                      <SelectItem key={b} value={b}>
+                        {b}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="space-y-1.5">
                 <Label>Employee</Label>
@@ -560,10 +597,11 @@ function NewTruckForm({
   onCreate,
   onClose,
 }: {
-  onCreate: (truckId: string, jobs: PendingJob[]) => void;
+  onCreate: (truckId: string, company: string, jobs: PendingJob[]) => void;
   onClose: () => void;
 }) {
   const [truckId, setTruckId] = useState("");
+  const [company, setCompany] = useState("");
   const [pending, setPending] = useState<PendingJob[]>([]);
   const [weekCount, setWeekCount] = useState(1);
   const [addFor, setAddFor] = useState<Date | null>(null);
@@ -593,30 +631,37 @@ function NewTruckForm({
       return;
     }
     for (const p of pending) {
-      if (!p.date || !p.work.trim() || !p.employee.trim()) {
-        toast.error("Fill in date, task, and employee for every task");
-        return;
-      }
-      const isPreset = (WORK_OPTIONS as readonly string[]).includes(p.work);
-      if (isPreset && !p.bay.trim()) {
-        toast.error("Enter a bay # for every task");
+      if (!p.date || !p.work.trim()) {
+        toast.error("Fill in date and work to be done for every task");
         return;
       }
     }
-    onCreate(truckId.trim().toUpperCase(), pending);
+    onCreate(truckId.trim().toUpperCase(), company.trim(), pending);
   };
 
   return (
     <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
-      <div className="space-y-1.5">
-        <Label htmlFor="new-truck">Truck ID</Label>
-        <Input
-          id="new-truck"
-          placeholder="TRK-4821"
-          value={truckId}
-          onChange={(e) => setTruckId(e.target.value)}
-        />
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="new-truck">Truck ID</Label>
+          <Input
+            id="new-truck"
+            placeholder="TRK-4821"
+            value={truckId}
+            onChange={(e) => setTruckId(e.target.value)}
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="new-truck-company">Company</Label>
+          <Input
+            id="new-truck-company"
+            placeholder="Acme Logistics"
+            value={company}
+            onChange={(e) => setCompany(e.target.value)}
+          />
+        </div>
       </div>
+
 
       <div className="space-y-2">
         <Label>Schedule</Label>
@@ -701,10 +746,12 @@ export function TruckSchedule({
   jobs,
   addJob,
   renameTruck,
+  onToggleComplete,
 }: {
   jobs: Job[];
   addJob: (j: Omit<Job, "id" | "createdAt">) => void;
   renameTruck?: (oldId: string, newId: string) => void;
+  onToggleComplete?: (id: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [openTruck, setOpenTruck] = useState<string | null>(null);
@@ -714,6 +761,9 @@ export function TruckSchedule({
   const [newTruckOpen, setNewTruckOpen] = useState(false);
   const [editTruck, setEditTruck] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
+  const { getStatus, setField, renameTruckStatus } = useTruckStatus();
+  const [companyFilter, setCompanyFilter] = useState<string>("__all__");
+
 
   const grouped = useMemo(() => {
     const map = new Map<string, Job[]>();
@@ -723,18 +773,40 @@ export function TruckSchedule({
       map.set(j.truckId, arr);
     }
     return Array.from(map.entries())
-      .map(([truckId, list]) => ({
-        truckId,
-        jobs: list.sort((a, b) => a.date.localeCompare(b.date)),
-      }))
-      .sort((a, b) => a.truckId.localeCompare(b.truckId));
+      .map(([truckId, list]) => {
+        const sorted = list.sort((a, b) => a.date.localeCompare(b.date));
+        const company =
+          sorted.find((j) => (j.company ?? "").trim() !== "")?.company?.trim() ?? "";
+        return { truckId, jobs: sorted, company };
+      })
+      .sort((a, b) => {
+        const ad = a.jobs[0]?.date ?? "";
+        const bd = b.jobs[0]?.date ?? "";
+        if (ad !== bd) return ad.localeCompare(bd);
+        return a.truckId.localeCompare(b.truckId);
+      });
+
   }, [jobs]);
 
-  const filtered = query.trim()
-    ? grouped.filter((g) =>
-        g.truckId.toLowerCase().includes(query.trim().toLowerCase()),
-      )
-    : grouped;
+  const companies = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of grouped) if (g.company) set.add(g.company);
+    return Array.from(set).sort((a, b) => a.localeCompare(b));
+  }, [grouped]);
+
+  const filtered = grouped.filter((g) => {
+    if (companyFilter === "__all__") {
+      // no-op
+    } else if (companyFilter === "__none__") {
+      if (g.company) return false;
+    } else if (g.company !== companyFilter) {
+      return false;
+    }
+    const q = query.trim().toLowerCase();
+    if (q && !g.truckId.toLowerCase().includes(q)) return false;
+    return true;
+  });
+
 
   return (
     <div className="space-y-4">
@@ -757,15 +829,32 @@ export function TruckSchedule({
         </div>
       </div>
 
-      <div className="relative">
-        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search truck ID…"
-          className="pl-9"
-        />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search truck ID…"
+            className="pl-9"
+          />
+        </div>
+        <Select value={companyFilter} onValueChange={setCompanyFilter}>
+          <SelectTrigger className="sm:w-56">
+            <SelectValue placeholder="Filter by company" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All companies</SelectItem>
+            <SelectItem value="__none__">No company</SelectItem>
+            {companies.map((c) => (
+              <SelectItem key={c} value={c}>
+                {c}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
+
 
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/40 py-12 text-center">
@@ -778,22 +867,53 @@ export function TruckSchedule({
         </div>
       ) : (
         <ul className="space-y-4">
-          {filtered.map(({ truckId, jobs: tjobs }) => (
+          {filtered.map(({ truckId, jobs: tjobs, company }) => {
+            const status = getStatus(truckId);
+            const grayed = status.completed && status.invoiced;
+            return (
             <li key={truckId}>
               <button
                 type="button"
                 onClick={() => setOpenTruck(truckId)}
-                className="w-full rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-card/80"
+                className={`w-full rounded-lg border p-4 text-left transition-colors hover:border-primary/60 ${
+                  grayed
+                    ? "border-border/50 bg-muted/40 opacity-70"
+                    : "border-border bg-card hover:bg-card/80"
+                }`}
               >
-                <div className="flex items-center justify-between border-b border-border/60 pb-2">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
                   <div className="flex items-center gap-2">
-                    <Truck className="h-4 w-4 text-primary" />
-                    <span className="font-display text-xl tracking-wider text-foreground">
-                      {truckId}
+                    <Truck className={`h-4 w-4 ${grayed ? "text-muted-foreground" : "text-primary"}`} />
+                    <span className={`font-display text-xl tracking-wider ${grayed ? "text-muted-foreground line-through" : "text-foreground"}`}>
+                      {truckId}{company ? ` - ${company}` : ""}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline">
+                  <div className="flex flex-wrap items-center gap-3">
+                    <label
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        checked={status.completed}
+                        onCheckedChange={(v) =>
+                          setField(truckId, "completed", v === true)
+                        }
+                      />
+                      Job Completed
+                    </label>
+                    <label
+                      className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        checked={status.invoiced}
+                        onCheckedChange={(v) =>
+                          setField(truckId, "invoiced", v === true)
+                        }
+                      />
+                      Invoiced
+                    </label>
+                    <Badge variant="outline" className={grayed ? "border-muted-foreground/30 text-muted-foreground" : ""}>
                       {tjobs.length} {tjobs.length === 1 ? "job" : "jobs"}
                     </Badge>
                     {renameTruck && (
@@ -823,13 +943,23 @@ export function TruckSchedule({
                 <ul className="mt-3 space-y-2">
                   {tjobs.map((job) => {
                     const d = new Date(`${job.date}T00:00:00`);
+                    const dim = grayed || job.completed;
                     return (
                       <li
                         key={job.id}
-                        className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border/60 bg-background/40 px-3 py-2 text-sm"
+                        className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border/60 bg-background/40 px-3 py-2 text-sm ${job.completed ? "opacity-60" : ""}`}
                       >
-                        <span className="flex items-center gap-1.5 font-medium text-foreground">
-                          <CalendarIcon className="h-3.5 w-3.5 text-primary" />
+                        {onToggleComplete && (
+                          <span onClick={(e) => e.stopPropagation()}>
+                            <Checkbox
+                              checked={!!job.completed}
+                              onCheckedChange={() => onToggleComplete(job.id)}
+                              aria-label="Mark task complete"
+                            />
+                          </span>
+                        )}
+                        <span className={`flex items-center gap-1.5 font-medium ${dim ? "text-muted-foreground" : "text-foreground"}`}>
+                          <CalendarIcon className={`h-3.5 w-3.5 ${dim ? "text-muted-foreground" : "text-primary"}`} />
                           {d.toLocaleDateString(undefined, {
                             month: "short",
                             day: "numeric",
@@ -838,7 +968,7 @@ export function TruckSchedule({
                         </span>
                         <Badge
                           variant="outline"
-                          className="border-accent/50 text-accent"
+                          className={dim ? "border-muted-foreground/30 text-muted-foreground" : "border-accent/50 text-accent"}
                         >
                           <MapPin className="mr-1 h-3 w-3" />
                           {job.bay}
@@ -847,9 +977,9 @@ export function TruckSchedule({
                           {job.shift === "ALL_DAY" ? "All Day" : job.shift}
                         </Badge>
                         <span
-                          className={`flex-1 rounded px-2 py-0.5 text-xs font-medium ${workColorClass(job.work)}`}
+                          className={`flex-1 rounded px-2 py-0.5 text-xs font-medium ${dim ? "bg-muted/40 text-muted-foreground" : workColorClass(job.work)}`}
                         >
-                          {job.work}
+                          {job.work}{job.color ? ` — ${job.color}` : ""}
                         </span>
                         <span className="flex items-center gap-1 text-xs text-muted-foreground">
                           <User className="h-3 w-3" />
@@ -861,7 +991,7 @@ export function TruckSchedule({
                 </ul>
               </button>
             </li>
-          ))}
+          );})}
         </ul>
       )}
 
@@ -932,7 +1062,7 @@ export function TruckSchedule({
           </DialogHeader>
           <NewTruckForm
             onClose={() => setNewTruckOpen(false)}
-            onCreate={(truckId, items) => {
+            onCreate={(truckId, company, items) => {
               for (const it of items) {
                 addJob({
                   truckId,
@@ -941,6 +1071,8 @@ export function TruckSchedule({
                   employee: it.employee,
                   date: it.date,
                   shift: it.shift,
+                  company: company || undefined,
+                  color: it.color,
                 });
               }
               toast.success(`${truckId} scheduled (${items.length} jobs)`);
@@ -987,6 +1119,7 @@ export function TruckSchedule({
                       }
                       if (next !== editTruck) {
                         renameTruck?.(editTruck, next);
+                        renameTruckStatus(editTruck, next);
                         toast.success(`Renamed to ${next}`);
                       }
                       setEditTruck(null);

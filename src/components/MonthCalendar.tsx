@@ -68,7 +68,7 @@ function SingleMonth({
     const offset = first.getDay(); // 0 = Sunday
     const start = new Date(first);
     start.setDate(first.getDate() - offset);
-    return Array.from({ length: 42 }, (_, i) => {
+    return Array.from({ length: 35 }, (_, i) => {
       const d = new Date(start);
       d.setDate(start.getDate() + i);
       return d;

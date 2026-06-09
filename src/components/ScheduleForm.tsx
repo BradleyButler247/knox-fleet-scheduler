@@ -17,8 +17,34 @@ import {
 import { toDateKey, type Job, type Shift } from "@/lib/schedule-store";
 import { toast } from "sonner";
 
-const BAYS = ["Bay 1", "Bay 2", "Bay 3", "Bay 4", "Bay 5"];
-const WORK_OPTIONS = ["Assembly", "Disassembly", "Sandblast", "Sanding", "Paint", "Other"] as const;
+const BAYS = [
+  "Sandblast Area",
+  "Outhouse",
+  "Yard",
+  "Bay 1",
+  "Bay 2",
+  "Bay 3",
+  "Bay 4",
+  "Paint Booth 1",
+  "Paint Booth 2",
+];
+const WORK_OPTIONS = ["Assembly", "Check-in", "Disassembly", "Mixer 2 Color", "Mixer 3 Color", "Other", "Paint", "Sandblast", "Sanding", "Touchups"] as const;
+
+const MIXER_PRESETS: Record<string, string[]> = {
+  "Mixer 2 Color": ["Disassemble", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Reassemble"],
+  "Mixer 3 Color": ["Disassemble", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Paint 3", "Reassemble"],
+};
+
+function addBusinessDays(date: Date, days: number): Date {
+  const d = new Date(date);
+  let added = 0;
+  while (added < days) {
+    d.setDate(d.getDate() + 1);
+    const day = d.getDay();
+    if (day !== 0 && day !== 6) added++;
+  }
+  return d;
+}
 
 function parseWork(work: string): { type: string; other: string } {
   if (!work) return { type: "", other: "" };
@@ -67,27 +93,59 @@ export function ScheduleForm({
   const initialWork = parseWork(initialJob?.work ?? "");
   const [workType, setWorkType] = useState<string>(initialWork.type);
   const [workOther, setWorkOther] = useState<string>(initialWork.other);
-  const [bay, setBay] = useState((initialJob?.bay ?? "").replace(/\D/g, ""));
+  const [bay, setBay] = useState(initialJob?.bay ?? "");
   const [employee, setEmployee] = useState(initialJob?.employee ?? "");
   const [shift, setShift] = useState<Shift>(initialJob?.shift ?? "ALL_DAY");
+  const [color, setColor] = useState(initialJob?.color ?? "");
+  const [mixerColors, setMixerColors] = useState<string[]>(["", "", ""]);
+  const [dateKeyState, setDateKeyState] = useState(
+    initialJob?.date ?? toDateKey(selectedDate),
+  );
 
+  const isMixer = workType === "Mixer 2 Color" || workType === "Mixer 3 Color";
   const resolvedWork = workType === "Other" ? workOther.trim() : workType;
   const bayRequired = workType !== "Other";
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!truckId.trim() || !resolvedWork || !employee.trim()) {
-      toast.error("Fill in truck ID, work and employee");
-      return;
-    }
-    if (bayRequired && !bay.trim()) {
-      toast.error("Enter a bay number");
+    if (!truckId.trim() || !resolvedWork) {
+      toast.error("Fill in truck ID and work to be done");
       return;
     }
     const finalBay = bay.trim();
-    const dateKey = toDateKey(selectedDate);
-
+    const dateKey = isEdit ? dateKeyState : toDateKey(selectedDate);
     const normalizedTruck = truckId.trim().toUpperCase();
+
+    if (isMixer && !isEdit) {
+      const tasks = MIXER_PRESETS[workType];
+      const startDate = new Date(`${dateKey}T00:00:00`);
+      const paintCount = workType === "Mixer 2 Color" ? 2 : 3;
+      let paintIdx = 0;
+      tasks.forEach((taskName, i) => {
+        const d = i === 0 ? startDate : addBusinessDays(startDate, i);
+        const isPaint = taskName.startsWith("Paint");
+        const paintColor = isPaint ? (mixerColors[paintIdx] ?? "").trim() : "";
+        if (isPaint) paintIdx++;
+        onSubmit({
+          truckId: normalizedTruck,
+          work: taskName,
+          bay: finalBay,
+          employee: employee.trim(),
+          date: toDateKey(d),
+          shift,
+          ...(isPaint && paintColor ? { color: paintColor } : {}),
+        });
+      });
+      toast.success(`Scheduled ${tasks.length} tasks for ${normalizedTruck}`);
+      setTruckId("");
+      setWorkType("Assembly");
+      setWorkOther("");
+      setEmployee("");
+      setColor("");
+      setMixerColors(["", "", ""]);
+      return;
+    }
+
     if (finalBay) {
       const clash = existingJobs.find(
         (j) =>
@@ -110,6 +168,7 @@ export function ScheduleForm({
       employee: employee.trim(),
       date: dateKey,
       shift,
+      ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
     };
 
     if (workType !== "Other") {
@@ -133,6 +192,7 @@ export function ScheduleForm({
     finalizeSubmit(payload);
   };
 
+
   const finalizeSubmit = (payload: Omit<Job, "id" | "createdAt">) => {
     onSubmit(payload);
     toast.success(
@@ -145,6 +205,7 @@ export function ScheduleForm({
       setWorkType("Assembly");
       setWorkOther("");
       setEmployee("");
+      setColor("");
     }
   };
 
@@ -162,17 +223,19 @@ export function ScheduleForm({
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="bay">Bay #{bayRequired ? "" : " (optional)"}</Label>
-          <Input
-            id="bay"
-            type="number"
-            inputMode="numeric"
-            min={1}
-            step={1}
-            placeholder="-- Please enter a bay # --"
-            value={bay}
-            onChange={(e) => setBay(e.target.value.replace(/\D/g, ""))}
-          />
+          <Label htmlFor="bay">Bay{bayRequired ? "" : " (optional)"}</Label>
+          <Select value={bay || undefined} onValueChange={setBay}>
+            <SelectTrigger id="bay">
+              <SelectValue placeholder="-- Select bay --" />
+            </SelectTrigger>
+            <SelectContent>
+              {BAYS.map((b) => (
+                <SelectItem key={b} value={b}>
+                  {b}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </div>
 
@@ -199,6 +262,37 @@ export function ScheduleForm({
           />
         )}
       </div>
+
+      {workType === "Paint" && (
+        <div className="space-y-1.5">
+          <Label htmlFor="color">Color</Label>
+          <Input
+            id="color"
+            placeholder="e.g. Fleet White, PMS 286"
+            value={color}
+            onChange={(e) => setColor(e.target.value)}
+          />
+        </div>
+      )}
+
+      {isMixer && (
+        <div className="space-y-1.5">
+          <Label>Paint Colors</Label>
+          {Array.from({ length: workType === "Mixer 2 Color" ? 2 : 3 }).map((_, i) => (
+            <Input
+              key={i}
+              placeholder={`Paint ${i + 1} color`}
+              value={mixerColors[i] ?? ""}
+              onChange={(e) => {
+                const next = [...mixerColors];
+                next[i] = e.target.value;
+                setMixerColors(next);
+              }}
+            />
+          ))}
+        </div>
+      )}
+
 
       <div className="space-y-1.5">
         <Label htmlFor="emp">Employee</Label>
@@ -230,6 +324,17 @@ export function ScheduleForm({
         </ToggleGroup>
       </div>
 
+      {isEdit && (
+        <div className="space-y-1.5">
+          <Label htmlFor="job-date">Date</Label>
+          <Input
+            id="job-date"
+            type="date"
+            value={dateKeyState}
+            onChange={(e) => setDateKeyState(e.target.value)}
+          />
+        </div>
+      )}
 
       <Button type="submit" variant="default" className="w-full text-base font-normal tracking-wider">
         {isEdit

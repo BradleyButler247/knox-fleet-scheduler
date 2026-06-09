@@ -12,6 +12,8 @@ export type Job = {
   shift: Shift;
   createdAt: number;
   completed?: boolean;
+  company?: string;
+  color?: string;
 };
 
 const KEY = "paint-shop-schedule-v1";
@@ -61,8 +63,50 @@ export function useJobs() {
     persist((prev) => prev.filter((j) => j.id !== id));
   };
 
+  const bumpWeekendToMonday = (d: Date) => {
+    const day = d.getDay();
+    if (day === 6) d.setDate(d.getDate() + 2);
+    else if (day === 0) d.setDate(d.getDate() + 1);
+    return d;
+  };
+
   const updateJob = (id: string, updates: Omit<Job, "id" | "createdAt">) => {
-    persist((prev) => prev.map((j) => (j.id === id ? { ...j, ...updates } : j)));
+    persist((prev) => {
+      const target = prev.find((j) => j.id === id);
+      if (!target) return prev;
+
+      const oldDate = target.date;
+      let newDate = updates.date;
+      const truckId = target.truckId;
+
+      // If the new date lands on a weekend, bump it to Monday.
+      if (newDate && newDate !== oldDate) {
+        const bumped = bumpWeekendToMonday(new Date(`${newDate}T00:00:00`));
+        newDate = toDateKey(bumped);
+      }
+
+      // If the date changed, shift every other job for the same truck by the
+      // same number of days so their relative positions are preserved.
+      let deltaDays = 0;
+      if (newDate && newDate !== oldDate) {
+        const a = new Date(`${oldDate}T00:00:00`).getTime();
+        const b = new Date(`${newDate}T00:00:00`).getTime();
+        deltaDays = Math.round((b - a) / 86400000);
+      }
+
+      const finalUpdates = { ...updates, date: newDate };
+
+      return prev.map((j) => {
+        if (j.id === id) return { ...j, ...finalUpdates };
+        if (deltaDays !== 0 && j.truckId === truckId) {
+          const shifted = new Date(`${j.date}T00:00:00`);
+          shifted.setDate(shifted.getDate() + deltaDays);
+          bumpWeekendToMonday(shifted);
+          return { ...j, date: toDateKey(shifted) };
+        }
+        return j;
+      });
+    });
   };
 
   const toggleComplete = (id: string) => {
