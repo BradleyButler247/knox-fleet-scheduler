@@ -249,13 +249,15 @@ function DayCell({
   const visible = showAll ? dayJobs : dayJobs.slice(0, fitWithMore);
   const hidden = dayJobs.length - visible.length;
 
+  const isWeekend = date.getDay() === 0 || date.getDay() === 6;
   return (
     <button
       onClick={() => onSelect(date)}
       className={cn(
-        "group @container/day relative flex flex-col items-stretch overflow-hidden rounded-md border border-border/50 bg-card/40 p-1.5 text-left transition-all",
+        "group @container/day relative flex flex-col items-stretch overflow-hidden rounded-md border border-border/50 p-1.5 text-left transition-all",
+        isWeekend ? "bg-muted/60 dark:bg-white/10" : "bg-card/40",
         !expanded && "aspect-square",
-        "hover:border-primary/60 hover:bg-card",
+        isWeekend ? "hover:border-primary/60 hover:bg-muted dark:hover:bg-white/15" : "hover:border-primary/60 hover:bg-card",
         !inMonth && "opacity-35",
         isSelected && "border-primary bg-primary/10 ring-1 ring-primary",
       )}

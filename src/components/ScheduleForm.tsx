@@ -28,14 +28,41 @@ const BAYS = [
   "Paint Booth 1",
   "Paint Booth 2",
 ];
-const WORK_OPTIONS = ["Assembly", "Check-in", "Disassembly", "Mixer 2 Color", "Mixer 3 Color", "Other", "Paint", "Sandblast", "Sanding", "Touchups"] as const;
+const WORK_OPTIONS = ["Mixer 2 Color", "Mixer 3 Color", "Disassembly", "Sandblast", "Sanding", "Paint", "Assembly", "Check-in", "Touchups", "Other"] as const;
 
-const MIXER_PRESETS: Record<string, string[]> = {
-  "Mixer 2 Color": ["Disassemble", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Reassemble"],
-  "Mixer 3 Color": ["Disassemble", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Paint 3", "Reassemble"],
+export const MIXER_PRESETS: Record<string, string[]> = {
+  "Mixer 2 Color": ["Disassembly", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Assembly"],
+  "Mixer 3 Color": ["Disassembly", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Paint 3", "Assembly"],
 };
 
-function addBusinessDays(date: Date, days: number): Date {
+export function pickBayForTask(
+  task: string,
+  dateKey: string,
+  shift: Shift,
+  existing: { date: string; bay: string; shift: Shift }[],
+): string {
+  const overlapsShift = (a: Shift, b: Shift) =>
+    a === "ALL_DAY" || b === "ALL_DAY" || a === b;
+  const isOccupied = (bay: string) =>
+    existing.some(
+      (j) => j.date === dateKey && j.bay === bay && overlapsShift(j.shift, shift),
+    );
+  const countOnDay = (bay: string) =>
+    existing.filter((j) => j.date === dateKey && j.bay === bay).length;
+  const pickFromOptions = (options: string[]) => {
+    const free = options.find((o) => !isOccupied(o));
+    if (free) return free;
+    return options.reduce((min, b) => (countOnDay(b) < countOnDay(min) ? b : min), options[0]);
+  };
+
+  if (task === "Disassembly" || task === "Assembly") return "Bay 4";
+  if (task === "Sandblast") return "Sandblast Area";
+  if (task === "Sanding") return pickFromOptions(["Bay 1", "Bay 2", "Bay 3"]);
+  if (task.startsWith("Paint")) return pickFromOptions(["Paint Booth 1", "Paint Booth 2"]);
+  return "";
+}
+
+export function addBusinessDays(date: Date, days: number): Date {
   const d = new Date(date);
   let added = 0;
   while (added < days) {
@@ -67,6 +94,7 @@ export function ScheduleForm({
   initialJob,
   defaultTruckId,
   lockTruckId,
+  defaultBay,
   existingJobs = [],
   onSubmit,
   onDelete,
@@ -75,13 +103,17 @@ export function ScheduleForm({
   initialJob?: Job;
   defaultTruckId?: string;
   lockTruckId?: boolean;
+  defaultBay?: string;
   existingJobs?: Job[];
   onSubmit: (j: Omit<Job, "id" | "createdAt">) => void;
   onDelete?: (id: string) => void;
 }) {
   const isEdit = Boolean(initialJob);
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const [conflict, setConflict] = useState<Job | null>(null);
+  const [conflictConfirm, setConflictConfirm] = useState<{
+    existing: Job;
+    payload: Omit<Job, "id" | "createdAt">;
+  } | null>(null);
   const [duplicateBlock, setDuplicateBlock] = useState<Job | null>(null);
   const [duplicateConfirm, setDuplicateConfirm] = useState<{
     existing: Job;
@@ -93,10 +125,11 @@ export function ScheduleForm({
   const initialWork = parseWork(initialJob?.work ?? "");
   const [workType, setWorkType] = useState<string>(initialWork.type);
   const [workOther, setWorkOther] = useState<string>(initialWork.other);
-  const [bay, setBay] = useState(initialJob?.bay ?? "");
+  const [bay, setBay] = useState(initialJob?.bay ?? defaultBay ?? "");
   const [employee, setEmployee] = useState(initialJob?.employee ?? "");
   const [shift, setShift] = useState<Shift>(initialJob?.shift ?? "ALL_DAY");
   const [color, setColor] = useState(initialJob?.color ?? "");
+  const [company, setCompany] = useState(initialJob?.company ?? "");
   const [mixerColors, setMixerColors] = useState<string[]>(["", "", ""]);
   const [dateKeyState, setDateKeyState] = useState(
     initialJob?.date ?? toDateKey(selectedDate),
@@ -119,20 +152,27 @@ export function ScheduleForm({
     if (isMixer && !isEdit) {
       const tasks = MIXER_PRESETS[workType];
       const startDate = new Date(`${dateKey}T00:00:00`);
-      const paintCount = workType === "Mixer 2 Color" ? 2 : 3;
+      const scheduled: { date: string; bay: string; shift: Shift }[] = [];
       let paintIdx = 0;
       tasks.forEach((taskName, i) => {
         const d = i === 0 ? startDate : addBusinessDays(startDate, i);
+        const tDateKey = toDateKey(d);
         const isPaint = taskName.startsWith("Paint");
         const paintColor = isPaint ? (mixerColors[paintIdx] ?? "").trim() : "";
         if (isPaint) paintIdx++;
+        const chosenBay = pickBayForTask(taskName, tDateKey, shift, [
+          ...existingJobs,
+          ...scheduled,
+        ]);
+        scheduled.push({ date: tDateKey, bay: chosenBay, shift });
         onSubmit({
           truckId: normalizedTruck,
           work: taskName,
-          bay: finalBay,
+          bay: chosenBay,
           employee: employee.trim(),
-          date: toDateKey(d),
+          date: tDateKey,
           shift,
+          ...(company.trim() ? { company: company.trim() } : {}),
           ...(isPaint && paintColor ? { color: paintColor } : {}),
         });
       });
@@ -146,6 +186,17 @@ export function ScheduleForm({
       return;
     }
 
+    const payload = {
+      truckId: normalizedTruck,
+      work: resolvedWork,
+      bay: finalBay,
+      employee: employee.trim(),
+      date: dateKey,
+      shift,
+      ...(company.trim() ? { company: company.trim() } : {}),
+      ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
+    };
+
     if (finalBay) {
       const clash = existingJobs.find(
         (j) =>
@@ -156,20 +207,10 @@ export function ScheduleForm({
           j.truckId !== normalizedTruck,
       );
       if (clash) {
-        setConflict(clash);
+        setConflictConfirm({ existing: clash, payload });
         return;
       }
     }
-
-    const payload = {
-      truckId: normalizedTruck,
-      work: resolvedWork,
-      bay: finalBay,
-      employee: employee.trim(),
-      date: dateKey,
-      shift,
-      ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
-    };
 
     if (workType !== "Other") {
       const sameTruckTask = existingJobs.filter(
@@ -206,6 +247,7 @@ export function ScheduleForm({
       setWorkOther("");
       setEmployee("");
       setColor("");
+      setCompany("");
     }
   };
 
@@ -216,7 +258,7 @@ export function ScheduleForm({
           <Label htmlFor="truck">Truck ID</Label>
           <Input
             id="truck"
-            placeholder="-- Please enter a truck ID --"
+            placeholder="Enter truck ID"
             value={truckId}
             onChange={(e) => setTruckId(e.target.value)}
             disabled={lockTruckId}
@@ -226,7 +268,7 @@ export function ScheduleForm({
           <Label htmlFor="bay">Bay{bayRequired ? "" : " (optional)"}</Label>
           <Select value={bay || undefined} onValueChange={setBay}>
             <SelectTrigger id="bay">
-              <SelectValue placeholder="-- Select bay --" />
+              <SelectValue placeholder="Select bay" />
             </SelectTrigger>
             <SelectContent>
               {BAYS.map((b) => (
@@ -240,10 +282,27 @@ export function ScheduleForm({
       </div>
 
       <div className="space-y-1.5">
+        <Label htmlFor="company">Company</Label>
+        <Input
+          id="company"
+          placeholder="Enter company name"
+          value={company}
+          onChange={(e) => setCompany(e.target.value)}
+        />
+      </div>
+
+
+      <div className="space-y-1.5">
         <Label htmlFor="work">Work to be done</Label>
-        <Select value={workType} onValueChange={setWorkType}>
+        <Select
+          value={workType}
+          onValueChange={(v) => {
+            setWorkType(v);
+            if (v === "Mixer 2 Color" || v === "Mixer 3 Color") setBay("Bay 4");
+          }}
+        >
           <SelectTrigger id="work">
-            <SelectValue placeholder="-- Select One --" />
+            <SelectValue placeholder="Select task" />
           </SelectTrigger>
           <SelectContent>
             {WORK_OPTIONS.map((o) => (
@@ -298,7 +357,7 @@ export function ScheduleForm({
         <Label htmlFor="emp">Employee</Label>
         <Input
           id="emp"
-          placeholder="-- Please enter an employee --"
+          placeholder="Enter employee name"
           value={employee}
           onChange={(e) => setEmployee(e.target.value)}
         />
@@ -376,23 +435,32 @@ export function ScheduleForm({
         </>
       )}
 
-      <AlertDialog open={conflict !== null} onOpenChange={(o) => !o && setConflict(null)}>
+      <AlertDialog open={conflictConfirm !== null} onOpenChange={(o) => !o && setConflictConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Scheduling conflict</AlertDialogTitle>
             <AlertDialogDescription>
-              {conflict && (
+              {conflictConfirm && (
                 <>
-                  Bay {String(conflict.bay).replace(/\D/g, "") || conflict.bay} is already scheduled {conflict.shift === "ALL_DAY" ? "all day" : `during ${shiftLabel(conflict.shift)}`} for {conflict.work} on truck {conflict.truckId}. Please adjust scheduling.
+                  Bay {String(conflictConfirm.existing.bay).replace(/\D/g, "") || conflictConfirm.existing.bay} is already scheduled {conflictConfirm.existing.shift === "ALL_DAY" ? "all day" : `during ${shiftLabel(conflictConfirm.existing.shift)}`} for {conflictConfirm.existing.work} on truck {conflictConfirm.existing.truckId}. Would you still like to add this task?
                 </>
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setConflict(null)}>OK</AlertDialogAction>
+            <AlertDialogCancel onClick={() => setConflictConfirm(null)}>No</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (conflictConfirm) finalizeSubmit(conflictConfirm.payload);
+                setConflictConfirm(null);
+              }}
+            >
+              Yes
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
 
       <AlertDialog open={duplicateBlock !== null} onOpenChange={(o) => !o && setDuplicateBlock(null)}>
         <AlertDialogContent>

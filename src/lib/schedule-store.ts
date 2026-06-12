@@ -121,5 +121,52 @@ export function useJobs() {
     );
   };
 
-  return { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck };
+  const addBusinessDays = (date: Date, n: number) => {
+    const out = new Date(date);
+    const dir = n >= 0 ? 1 : -1;
+    let remaining = Math.abs(n);
+    while (remaining > 0) {
+      out.setDate(out.getDate() + dir);
+      const day = out.getDay();
+      if (day !== 0 && day !== 6) remaining--;
+    }
+    return out;
+  };
+
+  const businessDaysBetween = (a: Date, b: Date) => {
+    if (a.getTime() === b.getTime()) return 0;
+    const dir = b.getTime() > a.getTime() ? 1 : -1;
+    const cur = new Date(a);
+    let count = 0;
+    const target = toDateKey(b);
+    while (toDateKey(cur) !== target) {
+      cur.setDate(cur.getDate() + dir);
+      const day = cur.getDay();
+      if (day !== 0 && day !== 6) count += dir;
+    }
+    return count;
+  };
+
+  const rescheduleFromJob = (id: string, newDate: string) => {
+    persist((prev) => {
+      const target = prev.find((j) => j.id === id);
+      if (!target) return prev;
+      const oldD = new Date(`${target.date}T00:00:00`);
+      const bumped = bumpWeekendToMonday(new Date(`${newDate}T00:00:00`));
+      const delta = businessDaysBetween(oldD, bumped);
+      if (delta === 0) return prev;
+      const oldTime = oldD.getTime();
+      return prev.map((j) => {
+        if (j.truckId !== target.truckId) return j;
+        const jd = new Date(`${j.date}T00:00:00`);
+        if (j.id === id || jd.getTime() > oldTime) {
+          const shifted = addBusinessDays(jd, delta);
+          return { ...j, date: toDateKey(shifted) };
+        }
+        return j;
+      });
+    });
+  };
+
+  return { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck, rescheduleFromJob };
 }

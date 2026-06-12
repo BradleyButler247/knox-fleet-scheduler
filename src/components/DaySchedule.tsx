@@ -1,4 +1,4 @@
-import { Truck, MapPin, User, X, ClipboardList, Pencil, Check } from "lucide-react";
+import { Truck, MapPin, User, X, ClipboardList, Pencil, Check, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -111,17 +111,28 @@ export function DaySchedule({
                     </div>
                   </div>
                 </div>
-                {onEdit && (
+                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  {onEdit && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => onEdit(job)}
+                      aria-label="Edit job"
+                      className="text-muted-foreground hover:bg-transparent hover:text-foreground"
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="icon"
-                    onClick={() => onEdit(job)}
-                    aria-label="Edit job"
-                    className="opacity-0 transition-opacity group-hover:opacity-100"
+                    onClick={() => onRemove(job.id)}
+                    aria-label="Delete job"
+                    className="text-muted-foreground hover:bg-transparent hover:text-destructive"
                   >
-                    <Pencil className="h-4 w-4" />
+                    <Trash2 className="h-4 w-4" />
                   </Button>
-                )}
+                </div>
               </div>
             </li>
           ))}

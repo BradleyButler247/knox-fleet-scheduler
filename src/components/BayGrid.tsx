@@ -1,12 +1,27 @@
-import { MapPin, Truck, StickyNote, ChevronDown, User } from "lucide-react";
+import { MapPin, Truck, StickyNote, ChevronDown, ChevronLeft, ChevronRight, User, Calendar as CalendarIcon, Plus, Trash2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { Calendar } from "@/components/ui/calendar";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ScheduleForm } from "@/components/ScheduleForm";
 import { useEffect, useRef, useState } from "react";
 import { toDateKey, type Job } from "@/lib/schedule-store";
 
@@ -56,15 +71,35 @@ export function BayGrid({
   date,
   jobs,
   showCompany = false,
+  addJob,
+  removeJob,
 }: {
   date: Date;
   jobs: Job[];
   showCompany?: boolean;
+  addJob?: (j: Omit<Job, "id" | "createdAt">) => void;
+  removeJob?: (id: string) => void;
 }) {
-  const dayJobs = jobs.filter((j) => j.date === toDateKey(date));
+  const [selectedDate, setSelectedDate] = useState<Date>(date);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const dayJobs = jobs.filter((j) => j.date === toDateKey(selectedDate));
   const [notes, setNotes] = useState("");
   const [notesExtra, setNotesExtra] = useState(0);
   const [activeCell, setActiveCell] = useState<Cell | null>(null);
+  const [addForCell, setAddForCell] = useState<Cell | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Job | null>(null);
+  const [expandedCells, setExpandedCells] = useState<Set<number>>(new Set());
+  const toggleExpanded = (i: number) => {
+    setExpandedCells((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
+  };
+
+  useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     try {
@@ -84,13 +119,83 @@ export function BayGrid({
   };
 
   return (
-    <div
-      className="grid grid-cols-3 gap-3"
-      style={{
-        minHeight: `calc(100dvh - 15rem + ${notesExtra}px)`,
-        gridTemplateRows: `repeat(12, minmax(40px, 1fr)) minmax(120px, ${120 + notesExtra}px)`,
-      }}
-    >
+    <div className="flex flex-col gap-3">
+      <div className="flex items-center justify-between">
+        <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+          Showing schedule for
+        </p>
+        <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+          <div className="flex items-center gap-1">
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Previous day"
+              className="hover:bg-primary hover:text-primary-foreground hover:border-primary"
+              onClick={() => {
+                const d = new Date(selectedDate);
+                d.setDate(d.getDate() - 1);
+                setSelectedDate(d);
+              }}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <PopoverTrigger asChild>
+              <Button
+                variant="outline"
+                className={cn(
+                  "justify-start gap-2 text-left font-normal hover:bg-primary hover:text-primary-foreground hover:border-primary",
+                  !selectedDate && "text-muted-foreground",
+                )}
+              >
+                <CalendarIcon className="h-4 w-4" />
+                {mounted
+                  ? selectedDate.toLocaleDateString(undefined, {
+                      weekday: "short",
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })
+                  : ""}
+              </Button>
+            </PopoverTrigger>
+            <Button
+              variant="outline"
+              size="icon"
+              aria-label="Next day"
+              className="hover:bg-primary hover:text-primary-foreground hover:border-primary"
+              onClick={() => {
+                const d = new Date(selectedDate);
+                d.setDate(d.getDate() + 1);
+                setSelectedDate(d);
+              }}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+          <PopoverContent className="w-auto p-0" align="end">
+            <Calendar
+              mode="single"
+              selected={selectedDate}
+              onSelect={(d) => {
+                if (d) {
+                  setSelectedDate(d);
+                  setDatePickerOpen(false);
+                }
+              }}
+              initialFocus
+              className={cn("p-3 pointer-events-auto")}
+            />
+          </PopoverContent>
+        </Popover>
+      </div>
+
+      <div
+        className={cn("grid grid-cols-3 gap-2", expandedCells.size === 0 && "overflow-hidden")}
+        style={{
+          [expandedCells.size > 0 ? "minHeight" : "height"]: `calc(100dvh - 18rem + ${notesExtra}px)`,
+          gridTemplateRows: `repeat(12, minmax(0, 1fr)) minmax(0, ${120 + notesExtra}px)`,
+        }}
+      >
       {CELLS.map((cell, i) => {
         if (cell.empty) {
           return (
@@ -103,13 +208,19 @@ export function BayGrid({
         }
         const cellJobs = dayJobs.filter((j) => cell.bays.includes(j.bay));
         const label = cell.bays.map(bayLabel).join(" / ");
+        const isExpanded = expandedCells.has(i);
+        const baseSpan = cell.rowSpan ?? 1;
+        const expandedSpan = isExpanded ? Math.max(baseSpan, cellJobs.length + 2) : baseSpan;
         return (
           <button
             type="button"
             key={i}
             onClick={() => setActiveCell(cell)}
-            className="flex flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/50 hover:bg-accent/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            style={cell.rowSpan ? { gridRow: `span ${cell.rowSpan}` } : undefined}
+            className={cn(
+              "flex flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/50 hover:bg-accent/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              "overflow-hidden",
+            )}
+            style={{ gridRow: `span ${expandedSpan}` }}
           >
             <div className="flex items-center gap-1.5 border-b border-border/60 pb-2">
               <MapPin className="h-3.5 w-3.5 text-accent" />
@@ -119,32 +230,130 @@ export function BayGrid({
               <Badge variant="secondary" className="ml-auto text-xs">
                 {cellJobs.length}
               </Badge>
-            </div>
-            <div className="flex-1 space-y-1.5 overflow-y-auto">
-              {cellJobs.length === 0 ? (
-                <p className="text-xs text-muted-foreground/60">No jobs</p>
-              ) : (
-                cellJobs.map((j) => (
-                  <div
-                    key={j.id}
-                    className={`flex items-center gap-1.5 rounded border border-border/60 bg-background/50 px-2 py-1 text-xs ${
-                      j.completed ? "opacity-50 line-through" : ""
-                    }`}
-                  >
-                    <Truck className="h-3 w-3 text-primary shrink-0" />
-                    <span className="font-medium truncate">
-                      {j.truckId}
-                      {showCompany && j.company ? ` - ${j.company}` : ""}
-                    </span>
-                    <Badge
-                      variant="outline"
-                      className={`ml-auto whitespace-nowrap text-[10px] px-1.5 py-0 ${workColorClass(j.work)} ${j.completed ? "line-through opacity-70" : ""}`}
-                    >
-                      {j.work}
-                    </Badge>
-                  </div>
-                ))
+              {addJob && (
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Add job to ${label}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setAddForCell(cell);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.stopPropagation();
+                      setAddForCell(cell);
+                    }
+                  }}
+                  className="cursor-pointer rounded-full p-0.5 text-muted-foreground hover:bg-primary hover:text-primary-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </span>
               )}
+            </div>
+            <div className={cn("flex-1 space-y-1.5 min-h-0", isExpanded ? "overflow-y-auto" : "overflow-hidden") }>
+              {(() => {
+                const maxVisible = Math.max(1, (cell.rowSpan ?? 3) - 1);
+                const visible = isExpanded ? cellJobs : cellJobs.slice(0, maxVisible);
+                const hidden = cellJobs.length - visible.length;
+                if (cellJobs.length === 0) {
+                  return <p className="text-xs text-muted-foreground/60">No jobs</p>;
+                }
+                return (
+                  <>
+                    {visible.map((j) => (
+                      <div
+                        key={j.id}
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setActiveCell(cell);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            setActiveCell(cell);
+                          }
+                        }}
+                        className={`flex min-w-0 cursor-pointer items-center gap-1.5 rounded border border-border/60 bg-background/50 px-2 py-1 text-xs hover:bg-accent/20 ${
+                          j.completed ? "opacity-50 line-through" : ""
+                        }`}
+                      >
+                        <Truck className="h-3 w-3 text-primary shrink-0" />
+                        <span className="shrink-0 truncate font-medium">
+                          {j.truckId}
+                          {showCompany && j.company ? ` - ${j.company}` : ""}
+                        </span>
+                        <Badge
+                          variant="outline"
+                          className={`min-w-0 flex-1 justify-start truncate text-[10px] px-1.5 py-0 ${workColorClass(j.work)} ${j.completed ? "line-through opacity-70" : ""}`}
+                        >
+                          {j.work}
+                        </Badge>
+                        {removeJob && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            aria-label="Delete task"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmDelete(j);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.stopPropagation();
+                                setConfirmDelete(j);
+                              }
+                            }}
+                            className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-transparent hover:text-destructive"
+                          >
+                            <Trash2 className="h-3 w-3" />
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                    {hidden > 0 && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleExpanded(i);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            toggleExpanded(i);
+                          }
+                        }}
+                        className="block cursor-pointer rounded px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        +{hidden} more
+                      </span>
+                    )}
+                    {isExpanded && cellJobs.length > maxVisible && (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleExpanded(i);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            toggleExpanded(i);
+                          }
+                        }}
+                        className="block cursor-pointer rounded px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        Show less
+                      </span>
+                    )}
+                  </>
+                );
+              })()}
             </div>
           </button>
         );
@@ -157,12 +366,36 @@ export function BayGrid({
       />
 
       <Dialog open={activeCell !== null} onOpenChange={(o) => !o && setActiveCell(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md [&>button]:hidden">
           {activeCell && (
             <>
               <DialogHeader>
-                <DialogTitle className="font-display text-2xl tracking-wider">
-                  {activeCell.bays.map(bayLabel).join(" / ")}
+                <DialogTitle className="flex items-center gap-2 font-display text-2xl tracking-wider">
+                  <span>{activeCell.bays.map(bayLabel).join(" / ")}</span>
+                  {addJob && (
+                    <Button
+                      type="button"
+                      size="icon"
+                      className="rounded-full h-6 w-6"
+                      onClick={() => {
+                        setAddForCell(activeCell);
+                        setActiveCell(null);
+                      }}
+                      aria-label="Add job"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    className="ml-auto h-6 w-6 rounded-full text-muted-foreground hover:bg-transparent hover:text-foreground"
+                    onClick={() => setActiveCell(null)}
+                    aria-label="Close"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
                 </DialogTitle>
               </DialogHeader>
               {(() => {
@@ -196,6 +429,18 @@ export function BayGrid({
                             {j.work}
                             {j.color ? ` — ${j.color}` : ""}
                           </Badge>
+                          {removeJob && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-muted-foreground hover:bg-transparent hover:text-destructive"
+                              onClick={() => setConfirmDelete(j)}
+                              aria-label="Delete task"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
                         </div>
                         <div className="mt-1.5 flex items-center gap-3 text-xs text-muted-foreground">
                           <span className="flex items-center gap-1">
@@ -212,6 +457,52 @@ export function BayGrid({
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={addForCell !== null} onOpenChange={(o) => !o && setAddForCell(null)}>
+        <DialogContent className="max-w-md">
+          {addForCell && addJob && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-display text-2xl tracking-wider">
+                  New Job — {addForCell.bays.map(bayLabel).join(" / ")}
+                </DialogTitle>
+              </DialogHeader>
+              <ScheduleForm
+                selectedDate={selectedDate}
+                existingJobs={jobs}
+                defaultBay={addForCell.bays[0]}
+                onSubmit={(j) => {
+                  addJob(j);
+                  setAddForCell(null);
+                }}
+              />
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <AlertDialog open={confirmDelete !== null} onOpenChange={(o) => !o && setConfirmDelete(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Please confirm</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this task? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                if (confirmDelete && removeJob) removeJob(confirmDelete.id);
+                setConfirmDelete(null);
+              }}
+            >
+              Confirm
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      </div>
     </div>
   );
 }

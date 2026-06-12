@@ -6,19 +6,26 @@ import {
   Calendar as CalendarIcon,
   Search,
   ChevronDown,
+  ChevronUp,
   Plus,
   X,
   Pencil,
+  Trash2,
 } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -28,12 +35,15 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ScheduleForm } from "@/components/ScheduleForm";
+import { ScheduleForm, MIXER_PRESETS, pickBayForTask, addBusinessDays } from "@/components/ScheduleForm";
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { toDateKey, type Job, type Shift } from "@/lib/schedule-store";
 import { useTruckStatus } from "@/lib/truck-status-store";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Calendar } from "@/components/ui/calendar";
+import { cn } from "@/lib/utils";
 
 function workColorClass(work: string) {
   switch (work) {
@@ -63,7 +73,6 @@ function addDays(d: Date, n: number) {
   return out;
 }
 
-
 type WeekItem = {
   id: string;
   bay: string;
@@ -78,11 +87,13 @@ function WeekGrid({
   itemsByDay,
   onAddJob,
   onRemoveItem,
+  roomy = false,
 }: {
   weekStart: Date;
   itemsByDay: Map<string, WeekItem[]>;
   onAddJob: (date: Date) => void;
   onRemoveItem?: (id: string) => void;
+  roomy?: boolean;
 }) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
   const weekEnd = addDays(weekStart, 6);
@@ -108,15 +119,18 @@ function WeekGrid({
           const key = toDateKey(d);
           const dayItems = itemsByDay.get(key) ?? [];
           const isToday = todayKey === key;
+          const isWeekend = d.getDay() === 0 || d.getDay() === 6;
           return (
             <button
               key={key}
               type="button"
               onClick={() => onAddJob(d)}
-              className={`group flex min-h-[140px] flex-col rounded-md border p-2 text-left transition-colors hover:border-primary hover:bg-primary/10 ${
+              className={`group flex ${roomy ? "min-h-0" : "min-h-[140px]"} flex-col rounded-md border p-2 text-left transition-colors hover:border-primary hover:bg-primary/10 ${
                 isToday
                   ? "border-primary/60 bg-primary/5"
-                  : "border-border bg-card"
+                  : isWeekend
+                    ? "border-border bg-muted/60 dark:bg-white/10"
+                    : "border-border bg-card"
               }`}
               aria-label={`Add job on ${d.toLocaleDateString()}`}
             >
@@ -128,14 +142,12 @@ function WeekGrid({
               </div>
               <div className="flex flex-1 flex-col gap-1.5">
                 {dayItems.length === 0 ? (
-                  <span className="mt-2 text-[11px] text-muted-foreground/60">
-                    —
-                  </span>
+                  <span className="mt-2 text-[11px] text-muted-foreground/60">—</span>
                 ) : (
                   dayItems.map((item) => (
                     <div
                       key={item.id}
-                      className="relative rounded border border-border/70 bg-background/60 p-1.5 text-[11px]"
+                      className="relative min-w-0 rounded border border-border/70 bg-background/60 p-1.5 pr-5 text-[11px] leading-snug"
                     >
                       {onRemoveItem && (
                         <span
@@ -157,27 +169,29 @@ function WeekGrid({
                           <X className="h-3 w-3" />
                         </span>
                       )}
-                      <div className="flex items-center justify-between gap-1 text-accent">
-                        <div className="flex items-center gap-1">
-                          <MapPin className="h-3 w-3" />
-                          <span className="font-medium">{item.bay}</span>
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex min-w-0 items-start gap-1 text-accent">
+                          <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
+                          <span className="min-w-0 break-words font-medium">{item.bay}</span>
                         </div>
-                        <span className="rounded bg-primary/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary">
-                          {item.shift === "ALL_DAY" ? "All" : item.shift}
+                        <span className="block w-fit max-w-full rounded bg-primary/15 px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-primary">
+                          {item.shift === "ALL_DAY" ? "All Day" : item.shift}
                         </span>
                       </div>
-                      <p className={`mt-0.5 line-clamp-2 pr-3 rounded px-1 py-0.5 ${workColorClass(item.work)}`}>
+                      <p
+                        className={`mt-1 break-words rounded px-1 py-0.5 ${workColorClass(item.work)}`}
+                      >
                         {item.work}
                         {item.color ? ` — ${item.color}` : ""}
                       </p>
-                      <div className="mt-0.5 flex items-center gap-1 text-muted-foreground">
-                        <User className="h-3 w-3" />
-                        <span className="truncate">{item.employee}</span>
+                      <div className="mt-1 flex min-w-0 items-start gap-1 text-muted-foreground">
+                        <User className="mt-0.5 h-3 w-3 shrink-0" />
+                        <span className="break-words">{item.employee}</span>
                       </div>
                     </div>
                   ))
                 )}
-                <span className="mt-auto flex items-center justify-center gap-1 rounded border border-dashed border-transparent py-1 text-[10px] uppercase tracking-widest text-muted-foreground opacity-0 transition-opacity group-hover:border-primary/40 group-hover:opacity-100">
+                <span className={`${roomy ? "mt-1" : "mt-auto"} flex items-center justify-center gap-1 rounded border border-dashed border-transparent py-1 text-[10px] uppercase tracking-widest text-muted-foreground opacity-0 transition-opacity group-hover:border-primary/40 group-hover:opacity-100`}>
                   <Plus className="h-3 w-3" /> Add
                 </span>
               </div>
@@ -198,10 +212,7 @@ function TruckWeekView({
   jobs: Job[];
   onAddJob: (date: Date) => void;
 }) {
-  const truckJobs = useMemo(
-    () => jobs.filter((j) => j.truckId === truckId),
-    [jobs, truckId],
-  );
+  const truckJobs = useMemo(() => jobs.filter((j) => j.truckId === truckId), [jobs, truckId]);
 
   const firstWeek = useMemo(() => {
     const upcoming = truckJobs
@@ -222,19 +233,12 @@ function TruckWeekView({
     return map;
   }, [truckJobs]);
 
-  const weeks = Array.from({ length: weekCount }, (_, i) =>
-    addDays(firstWeek, i * 7),
-  );
+  const weeks = Array.from({ length: weekCount }, (_, i) => addDays(firstWeek, i * 7));
 
   return (
     <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
       {weeks.map((w) => (
-        <WeekGrid
-          key={toDateKey(w)}
-          weekStart={w}
-          itemsByDay={jobsByDay}
-          onAddJob={onAddJob}
-        />
+        <WeekGrid key={toDateKey(w)} weekStart={w} itemsByDay={jobsByDay} onAddJob={onAddJob} />
       ))}
       <Button
         type="button"
@@ -261,23 +265,40 @@ const BAYS = [
   "Paint Booth 1",
   "Paint Booth 2",
 ];
-const WORK_OPTIONS = ["Assembly", "Check-in", "Disassembly", "Other", "Paint", "Sandblast", "Sanding", "Touchups"] as const;
+const WORK_OPTIONS = [
+  "Mixer 2 Color",
+  "Mixer 3 Color",
+  "Disassembly",
+  "Sandblast",
+  "Sanding",
+  "Paint",
+  "Assembly",
+  "Check-in",
+  "Touchups",
+  "Other",
+] as const;
 
 function PendingJobForm({
   date,
+  existingPending = [],
   onAdd,
+  onAddMany,
   onCancel,
 }: {
   date: Date;
+  existingPending?: PendingJob[];
   onAdd: (j: Omit<PendingJob, "id" | "date">) => void;
+  onAddMany?: (jobs: Omit<PendingJob, "id">[]) => void;
   onCancel: () => void;
 }) {
   const [workType, setWorkType] = useState<string>("");
   const [workOther, setWorkOther] = useState("");
-  const [bay, setBay] = useState(BAYS[0]);
+  const [bay, setBay] = useState("");
   const [employee, setEmployee] = useState("");
   const [shift, setShift] = useState<Shift>("ALL_DAY");
   const [color, setColor] = useState("");
+  const [mixerColors, setMixerColors] = useState<string[]>(["", "", ""]);
+  const isMixer = workType === "Mixer 2 Color" || workType === "Mixer 3 Color";
   const resolvedWork = workType === "Other" ? workOther.trim() : workType;
 
   return (
@@ -292,9 +313,9 @@ function PendingJobForm({
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label>Bay</Label>
-          <Select value={bay} onValueChange={setBay}>
+          <Select value={bay || undefined} onValueChange={setBay}>
             <SelectTrigger>
-              <SelectValue />
+              <SelectValue placeholder="Select bay" />
             </SelectTrigger>
             <SelectContent>
               {BAYS.map((b) => (
@@ -309,7 +330,7 @@ function PendingJobForm({
           <Label htmlFor="emp">Employee</Label>
           <Input
             id="emp"
-            placeholder="Jordan Rivera"
+            placeholder="Enter employee name"
             value={employee}
             onChange={(e) => setEmployee(e.target.value)}
           />
@@ -317,9 +338,15 @@ function PendingJobForm({
       </div>
       <div className="space-y-1.5">
         <Label htmlFor="work">Work to be done</Label>
-        <Select value={workType} onValueChange={setWorkType}>
+        <Select
+          value={workType}
+          onValueChange={(v) => {
+            setWorkType(v);
+            if (v === "Mixer 2 Color" || v === "Mixer 3 Color") setBay("Bay 4");
+          }}
+        >
           <SelectTrigger id="work">
-            <SelectValue placeholder="-- Select One --" />
+            <SelectValue placeholder="Select task" />
           </SelectTrigger>
           <SelectContent>
             {WORK_OPTIONS.map((o) => (
@@ -349,6 +376,23 @@ function PendingJobForm({
           />
         </div>
       )}
+      {isMixer && (
+        <div className="space-y-1.5">
+          <Label>Paint Colors</Label>
+          {Array.from({ length: workType === "Mixer 2 Color" ? 2 : 3 }).map((_, i) => (
+            <Input
+              key={i}
+              placeholder={`Paint ${i + 1} color`}
+              value={mixerColors[i] ?? ""}
+              onChange={(e) => {
+                const next = [...mixerColors];
+                next[i] = e.target.value;
+                setMixerColors(next);
+              }}
+            />
+          ))}
+        </div>
+      )}
       <div className="space-y-1.5">
         <Label>Shift</Label>
         <ToggleGroup
@@ -357,13 +401,22 @@ function PendingJobForm({
           onValueChange={(v) => v && setShift(v as Shift)}
           className="grid grid-cols-3 gap-2"
         >
-          <ToggleGroupItem value="AM" className="border border-border data-[state=on]:border-primary">
+          <ToggleGroupItem
+            value="AM"
+            className="border border-border data-[state=on]:border-primary"
+          >
             AM
           </ToggleGroupItem>
-          <ToggleGroupItem value="PM" className="border border-border data-[state=on]:border-primary">
+          <ToggleGroupItem
+            value="PM"
+            className="border border-border data-[state=on]:border-primary"
+          >
             PM
           </ToggleGroupItem>
-          <ToggleGroupItem value="ALL_DAY" className="border border-border data-[state=on]:border-primary">
+          <ToggleGroupItem
+            value="ALL_DAY"
+            className="border border-border data-[state=on]:border-primary"
+          >
             All Day
           </ToggleGroupItem>
         </ToggleGroup>
@@ -377,6 +430,35 @@ function PendingJobForm({
           onClick={() => {
             if (!resolvedWork) {
               toast.error("Select work to be done");
+              return;
+            }
+            if (isMixer && onAddMany) {
+              const tasks = MIXER_PRESETS[workType];
+              const startDate = new Date(date);
+              const scheduled: { date: string; bay: string; shift: Shift }[] = [];
+              const out: Omit<PendingJob, "id">[] = [];
+              let paintIdx = 0;
+              tasks.forEach((taskName, i) => {
+                const d = i === 0 ? startDate : addBusinessDays(startDate, i);
+                const tDateKey = toDateKey(d);
+                const isPaint = taskName.startsWith("Paint");
+                const paintColor = isPaint ? (mixerColors[paintIdx] ?? "").trim() : "";
+                if (isPaint) paintIdx++;
+                const chosenBay = pickBayForTask(taskName, tDateKey, shift, [
+                  ...existingPending,
+                  ...scheduled,
+                ]);
+                scheduled.push({ date: tDateKey, bay: chosenBay, shift });
+                out.push({
+                  date: tDateKey,
+                  work: taskName,
+                  bay: chosenBay,
+                  employee: employee.trim(),
+                  shift,
+                  ...(isPaint && paintColor ? { color: paintColor } : {}),
+                });
+              });
+              onAddMany(out);
               return;
             }
             onAdd({
@@ -404,18 +486,19 @@ function MobileTaskRows({
 }) {
   const todayKey = toDateKey(new Date());
 
-  const rows = pending.length === 0
-    ? [
-        {
-          id: "__draft__",
-          date: todayKey,
-          work: "",
-          bay: "",
-          employee: "",
-          shift: "ALL_DAY" as Shift,
-        } as PendingJob,
-      ]
-    : pending;
+  const rows =
+    pending.length === 0
+      ? [
+          {
+            id: "__draft__",
+            date: todayKey,
+            work: "",
+            bay: "",
+            employee: "",
+            shift: "ALL_DAY" as Shift,
+          } as PendingJob,
+        ]
+      : pending;
 
   const updateRow = (id: string, patch: Partial<PendingJob>) => {
     setPending((prev) => {
@@ -456,13 +539,11 @@ function MobileTaskRows({
   return (
     <div className="space-y-3">
       {rows.map((row, idx) => {
-        const isOther = !WORK_OPTIONS.includes(row.work as typeof WORK_OPTIONS[number]) && row.work !== "";
+        const isOther =
+          !WORK_OPTIONS.includes(row.work as (typeof WORK_OPTIONS)[number]) && row.work !== "";
         const workType = isOther ? "Other" : row.work;
         return (
-          <div
-            key={row.id}
-            className="space-y-3 rounded-md border border-border bg-card/40 p-3"
-          >
+          <div key={row.id} className="space-y-3 rounded-md border border-border bg-card/40 p-3">
             <div className="flex items-center justify-between">
               <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
                 Task {idx + 1}
@@ -494,12 +575,10 @@ function MobileTaskRows({
               <Label>Task</Label>
               <Select
                 value={workType || undefined}
-                onValueChange={(v) =>
-                  updateRow(row.id, { work: v === "Other" ? "" : v })
-                }
+                onValueChange={(v) => updateRow(row.id, { work: v === "Other" ? "" : v })}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="-- Select One --" />
+                  <SelectValue placeholder="Select task" />
                 </SelectTrigger>
                 <SelectContent>
                   {WORK_OPTIONS.map((o) => (
@@ -535,7 +614,7 @@ function MobileTaskRows({
                   onValueChange={(v) => updateRow(row.id, { bay: v })}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder="-- Select bay --" />
+                    <SelectValue placeholder="Select bay" />
                   </SelectTrigger>
                   <SelectContent>
                     {BAYS.map((b) => (
@@ -549,11 +628,9 @@ function MobileTaskRows({
               <div className="space-y-1.5">
                 <Label>Employee</Label>
                 <Input
-                  placeholder="-- Please enter an employee --"
+                  placeholder="Enter employee name"
                   value={row.employee}
-                  onChange={(e) =>
-                    updateRow(row.id, { employee: e.target.value })
-                  }
+                  onChange={(e) => updateRow(row.id, { employee: e.target.value })}
                 />
               </div>
             </div>
@@ -566,13 +643,22 @@ function MobileTaskRows({
                 onValueChange={(v) => v && updateRow(row.id, { shift: v as Shift })}
                 className="grid grid-cols-3 gap-2"
               >
-                <ToggleGroupItem value="AM" className="border border-border data-[state=on]:border-primary">
+                <ToggleGroupItem
+                  value="AM"
+                  className="border border-border data-[state=on]:border-primary"
+                >
                   AM
                 </ToggleGroupItem>
-                <ToggleGroupItem value="PM" className="border border-border data-[state=on]:border-primary">
+                <ToggleGroupItem
+                  value="PM"
+                  className="border border-border data-[state=on]:border-primary"
+                >
                   PM
                 </ToggleGroupItem>
-                <ToggleGroupItem value="ALL_DAY" className="border border-border data-[state=on]:border-primary">
+                <ToggleGroupItem
+                  value="ALL_DAY"
+                  className="border border-border data-[state=on]:border-primary"
+                >
                   All Day
                 </ToggleGroupItem>
               </ToggleGroup>
@@ -581,12 +667,7 @@ function MobileTaskRows({
         );
       })}
 
-      <Button
-        type="button"
-        variant="outline"
-        className="w-full gap-2"
-        onClick={addRow}
-      >
+      <Button type="button" variant="outline" className="w-full gap-2" onClick={addRow}>
         <Plus className="h-4 w-4" /> Add another task
       </Button>
     </div>
@@ -604,12 +685,12 @@ function NewTruckForm({
   const [company, setCompany] = useState("");
   const [pending, setPending] = useState<PendingJob[]>([]);
   const [weekCount, setWeekCount] = useState(1);
+  const [weeksBack, setWeeksBack] = useState(0);
   const [addFor, setAddFor] = useState<Date | null>(null);
 
-  const firstWeek = useMemo(() => startOfWeek(new Date()), []);
-  const weeks = Array.from({ length: weekCount }, (_, i) =>
-    addDays(firstWeek, i * 7),
-  );
+  const baseWeek = useMemo(() => startOfWeek(new Date()), []);
+  const firstWeek = useMemo(() => addDays(baseWeek, -weeksBack * 7), [baseWeek, weeksBack]);
+  const weeks = Array.from({ length: weekCount + weeksBack }, (_, i) => addDays(firstWeek, i * 7));
 
   const itemsByDay = useMemo(() => {
     const map = new Map<string, WeekItem[]>();
@@ -640,13 +721,13 @@ function NewTruckForm({
   };
 
   return (
-    <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
+    <div className="flex min-h-0 flex-1 flex-col space-y-4 pr-1">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="new-truck">Truck ID</Label>
           <Input
             id="new-truck"
-            placeholder="TRK-4821"
+            placeholder="Enter truck ID"
             value={truckId}
             onChange={(e) => setTruckId(e.target.value)}
           />
@@ -655,13 +736,12 @@ function NewTruckForm({
           <Label htmlFor="new-truck-company">Company</Label>
           <Input
             id="new-truck-company"
-            placeholder="Acme Logistics"
+            placeholder="Enter company name"
             value={company}
             onChange={(e) => setCompany(e.target.value)}
           />
         </div>
       </div>
-
 
       <div className="space-y-2">
         <Label>Schedule</Label>
@@ -671,26 +751,35 @@ function NewTruckForm({
       </div>
 
       {/* Desktop / tablet: week calendar grid */}
-      <div className="hidden md:block space-y-4">
+      <div className="hidden md:flex md:min-h-0 md:flex-1 md:flex-col md:space-y-4 md:overflow-y-auto md:pr-1">
         {weeks.map((w) => (
           <WeekGrid
             key={toDateKey(w)}
             weekStart={w}
             itemsByDay={itemsByDay}
             onAddJob={(d) => setAddFor(d)}
-            onRemoveItem={(id) =>
-              setPending((prev) => prev.filter((p) => p.id !== id))
-            }
+            roomy
+            onRemoveItem={(id) => setPending((prev) => prev.filter((p) => p.id !== id))}
           />
         ))}
-        <Button
-          type="button"
-          variant="outline"
-          className="w-full gap-2"
-          onClick={() => setWeekCount((c) => c + 1)}
-        >
-          <ChevronDown className="h-4 w-4" /> Show next week
-        </Button>
+        <div className="grid grid-cols-2 gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full gap-2"
+            onClick={() => setWeeksBack((c) => c + 1)}
+          >
+            <ChevronUp className="h-4 w-4" /> Show previous week
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            className="w-full gap-2"
+            onClick={() => setWeekCount((c) => c + 1)}
+          >
+            <ChevronDown className="h-4 w-4" /> Show next week
+          </Button>
+        </div>
       </div>
 
       {/* Mobile: stacked date + task rows */}
@@ -703,8 +792,7 @@ function NewTruckForm({
           Cancel
         </Button>
         <Button onClick={handleCreate} className="font-display tracking-wider">
-          Create truck ({pending.length}{" "}
-          {pending.length === 1 ? "job" : "jobs"})
+          Create truck ({pending.length} {pending.length === 1 ? "job" : "jobs"})
         </Button>
       </div>
 
@@ -713,12 +801,11 @@ function NewTruckForm({
           {addFor && (
             <>
               <DialogHeader>
-                <DialogTitle className="font-display text-xl tracking-wider">
-                  New Job
-                </DialogTitle>
+                <DialogTitle className="font-display text-xl tracking-wider">New Job</DialogTitle>
               </DialogHeader>
               <PendingJobForm
                 date={addFor}
+                existingPending={pending}
                 onCancel={() => setAddFor(null)}
                 onAdd={(j) => {
                   setPending((prev) => [
@@ -731,6 +818,13 @@ function NewTruckForm({
                   ]);
                   setAddFor(null);
                 }}
+                onAddMany={(jobs) => {
+                  setPending((prev) => [
+                    ...prev,
+                    ...jobs.map((j) => ({ ...j, id: crypto.randomUUID() })),
+                  ]);
+                  setAddFor(null);
+                }}
               />
             </>
           )}
@@ -740,30 +834,89 @@ function NewTruckForm({
   );
 }
 
+function ReschedulePopover({
+  currentDate,
+  dim,
+  onConfirm,
+}: {
+  currentDate: Date;
+  dim: boolean;
+  onConfirm: (picked: Date) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [picked, setPicked] = useState<Date | undefined>(currentDate);
 
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) setPicked(currentDate);
+      }}
+    >
+      <PopoverTrigger asChild onClick={(e) => e.stopPropagation()}>
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label="Reschedule from this task"
+          className={`cursor-pointer rounded p-0.5 hover:bg-muted ${dim ? "text-muted-foreground" : "text-primary"}`}
+        >
+          <CalendarIcon className="h-3.5 w-3.5" />
+        </span>
+      </PopoverTrigger>
+      <PopoverContent className="w-auto p-0" align="start" onClick={(e) => e.stopPropagation()}>
+        <Calendar
+          mode="single"
+          selected={picked}
+          onSelect={setPicked}
+          initialFocus
+          className={cn("p-3 pointer-events-auto")}
+        />
+        <div className="flex justify-end gap-2 border-t border-border p-2">
+          <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+            Cancel
+          </Button>
+          <Button
+            size="sm"
+            onClick={() => {
+              if (!picked) return;
+              onConfirm(picked);
+              setOpen(false);
+            }}
+          >
+            Confirm
+          </Button>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export function TruckSchedule({
   jobs,
   addJob,
   renameTruck,
   onToggleComplete,
+  removeJob,
+  rescheduleFromJob,
 }: {
   jobs: Job[];
   addJob: (j: Omit<Job, "id" | "createdAt">) => void;
   renameTruck?: (oldId: string, newId: string) => void;
   onToggleComplete?: (id: string) => void;
+  removeJob?: (id: string) => void;
+  rescheduleFromJob?: (id: string, newDate: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [openTruck, setOpenTruck] = useState<string | null>(null);
-  const [addFor, setAddFor] = useState<{ truckId: string; date: Date } | null>(
-    null,
-  );
+  const [addFor, setAddFor] = useState<{ truckId: string; date: Date } | null>(null);
   const [newTruckOpen, setNewTruckOpen] = useState(false);
   const [editTruck, setEditTruck] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const { getStatus, setField, renameTruckStatus } = useTruckStatus();
+  const [deleteTruck, setDeleteTruck] = useState<string | null>(null);
+  const [deleteJob, setDeleteJob] = useState<Job | null>(null);
+  const { getStatus, setField, renameTruckStatus, removeTruckStatus } = useTruckStatus();
   const [companyFilter, setCompanyFilter] = useState<string>("__all__");
-
 
   const grouped = useMemo(() => {
     const map = new Map<string, Job[]>();
@@ -775,8 +928,7 @@ export function TruckSchedule({
     return Array.from(map.entries())
       .map(([truckId, list]) => {
         const sorted = list.sort((a, b) => a.date.localeCompare(b.date));
-        const company =
-          sorted.find((j) => (j.company ?? "").trim() !== "")?.company?.trim() ?? "";
+        const company = sorted.find((j) => (j.company ?? "").trim() !== "")?.company?.trim() ?? "";
         return { truckId, jobs: sorted, company };
       })
       .sort((a, b) => {
@@ -785,7 +937,6 @@ export function TruckSchedule({
         if (ad !== bd) return ad.localeCompare(bd);
         return a.truckId.localeCompare(b.truckId);
       });
-
   }, [jobs]);
 
   const companies = useMemo(() => {
@@ -807,14 +958,11 @@ export function TruckSchedule({
     return true;
   });
 
-
   return (
     <div className="space-y-4">
       <div className="flex items-end justify-between border-b border-border pb-3">
         <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-            Schedule by
-          </p>
+          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">Schedule by</p>
           <h2 className="font-display text-4xl text-foreground">Truck</h2>
         </div>
         <div className="flex items-center gap-3">
@@ -855,14 +1003,11 @@ export function TruckSchedule({
         </Select>
       </div>
 
-
       {filtered.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card/40 py-12 text-center">
           <Truck className="h-10 w-10 text-muted-foreground/60" />
           <p className="mt-3 text-sm text-muted-foreground">
-            {jobs.length === 0
-              ? "No trucks scheduled yet."
-              : "No trucks match your search."}
+            {jobs.length === 0 ? "No trucks scheduled yet." : "No trucks match your search."}
           </p>
         </div>
       ) : (
@@ -871,134 +1016,196 @@ export function TruckSchedule({
             const status = getStatus(truckId);
             const grayed = status.completed && status.invoiced;
             return (
-            <li key={truckId}>
-              <button
-                type="button"
-                onClick={() => setOpenTruck(truckId)}
-                className={`w-full rounded-lg border p-4 text-left transition-colors hover:border-primary/60 ${
-                  grayed
-                    ? "border-border/50 bg-muted/40 opacity-70"
-                    : "border-border bg-card hover:bg-card/80"
-                }`}
-              >
-                <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
-                  <div className="flex items-center gap-2">
-                    <Truck className={`h-4 w-4 ${grayed ? "text-muted-foreground" : "text-primary"}`} />
-                    <span className={`font-display text-xl tracking-wider ${grayed ? "text-muted-foreground line-through" : "text-foreground"}`}>
-                      {truckId}{company ? ` - ${company}` : ""}
-                    </span>
-                  </div>
-                  <div className="flex flex-wrap items-center gap-3">
-                    <label
-                      className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Checkbox
-                        checked={status.completed}
-                        onCheckedChange={(v) =>
-                          setField(truckId, "completed", v === true)
-                        }
+              <li key={truckId}>
+                <button
+                  type="button"
+                  onClick={() => setOpenTruck(truckId)}
+                  className={`w-full rounded-lg border p-4 text-left transition-colors hover:border-primary/60 ${
+                    grayed
+                      ? "border-border/50 bg-muted/40 opacity-70"
+                      : "border-border bg-card hover:bg-card/80"
+                  }`}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/60 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Truck
+                        className={`h-4 w-4 ${grayed ? "text-muted-foreground" : "text-primary"}`}
                       />
-                      Job Completed
-                    </label>
-                    <label
-                      className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <Checkbox
-                        checked={status.invoiced}
-                        onCheckedChange={(v) =>
-                          setField(truckId, "invoiced", v === true)
-                        }
-                      />
-                      Invoiced
-                    </label>
-                    <Badge variant="outline" className={grayed ? "border-muted-foreground/30 text-muted-foreground" : ""}>
-                      {tjobs.length} {tjobs.length === 1 ? "job" : "jobs"}
-                    </Badge>
-                    {renameTruck && (
                       <span
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`Edit ${truckId}`}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditTruck(truckId);
-                          setEditValue(truckId);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
+                        className={`font-display text-xl tracking-wider ${grayed ? "text-muted-foreground line-through" : "text-foreground"}`}
+                      >
+                        {truckId}
+                        {company ? ` - ${company}` : ""}
+                      </span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-3">
+                      <label
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Checkbox
+                          checked={status.completed}
+                          onCheckedChange={(v) => setField(truckId, "completed", v === true)}
+                        />
+                        Job Completed
+                      </label>
+                      <label
+                        className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <Checkbox
+                          checked={status.invoiced}
+                          onCheckedChange={(v) => setField(truckId, "invoiced", v === true)}
+                        />
+                        Invoiced
+                      </label>
+                      <Badge
+                        variant="outline"
+                        className={grayed ? "border-muted-foreground/30 text-muted-foreground" : ""}
+                      >
+                        {tjobs.length} {tjobs.length === 1 ? "job" : "jobs"}
+                      </Badge>
+                      {renameTruck && (
+                        <span
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Edit ${truckId}`}
+                          onClick={(e) => {
                             e.stopPropagation();
                             setEditTruck(truckId);
                             setEditValue(truckId);
-                          }
-                        }}
-                        className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <ul className="mt-3 space-y-2">
-                  {tjobs.map((job) => {
-                    const d = new Date(`${job.date}T00:00:00`);
-                    const dim = grayed || job.completed;
-                    return (
-                      <li
-                        key={job.id}
-                        className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border/60 bg-background/40 px-3 py-2 text-sm ${job.completed ? "opacity-60" : ""}`}
-                      >
-                        {onToggleComplete && (
-                          <span onClick={(e) => e.stopPropagation()}>
-                            <Checkbox
-                              checked={!!job.completed}
-                              onCheckedChange={() => onToggleComplete(job.id)}
-                              aria-label="Mark task complete"
-                            />
-                          </span>
-                        )}
-                        <span className={`flex items-center gap-1.5 font-medium ${dim ? "text-muted-foreground" : "text-foreground"}`}>
-                          <CalendarIcon className={`h-3.5 w-3.5 ${dim ? "text-muted-foreground" : "text-primary"}`} />
-                          {d.toLocaleDateString(undefined, {
-                            month: "short",
-                            day: "numeric",
-                            year: "numeric",
-                          })}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={dim ? "border-muted-foreground/30 text-muted-foreground" : "border-accent/50 text-accent"}
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.stopPropagation();
+                              setEditTruck(truckId);
+                              setEditValue(truckId);
+                            }
+                          }}
+                          className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground"
                         >
-                          <MapPin className="mr-1 h-3 w-3" />
-                          {job.bay}
-                        </Badge>
-                        <Badge variant="outline" className="border-muted-foreground/30 text-muted-foreground">
-                          {job.shift === "ALL_DAY" ? "All Day" : job.shift}
-                        </Badge>
+                          <Pencil className="h-4 w-4" />
+                        </span>
+                      )}
+                      {removeJob && (
                         <span
-                          className={`flex-1 rounded px-2 py-0.5 text-xs font-medium ${dim ? "bg-muted/40 text-muted-foreground" : workColorClass(job.work)}`}
+                          role="button"
+                          tabIndex={0}
+                          aria-label={`Delete ${truckId}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setDeleteTruck(truckId);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.stopPropagation();
+                              setDeleteTruck(truckId);
+                            }
+                          }}
+                          className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-transparent hover:text-destructive"
                         >
-                          {job.work}{job.color ? ` — ${job.color}` : ""}
+                          <Trash2 className="h-4 w-4" />
                         </span>
-                        <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                          <User className="h-3 w-3" />
-                          {job.employee}
-                        </span>
-                      </li>
-                    );
-                  })}
-                </ul>
-              </button>
-            </li>
-          );})}
+                      )}
+                    </div>
+                  </div>
+                  <ul className="mt-3 space-y-2">
+                    {tjobs.map((job) => {
+                      const d = new Date(`${job.date}T00:00:00`);
+                      const dim = grayed || job.completed;
+                      return (
+                        <li
+                          key={job.id}
+                          className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border/60 bg-background/40 px-3 py-2 text-sm ${job.completed ? "opacity-60" : ""}`}
+                        >
+                          {onToggleComplete && (
+                            <span onClick={(e) => e.stopPropagation()}>
+                              <Checkbox
+                                checked={!!job.completed}
+                                onCheckedChange={() => onToggleComplete(job.id)}
+                                aria-label="Mark task complete"
+                              />
+                            </span>
+                          )}
+                          <span
+                            className={`flex items-center gap-1.5 font-medium ${dim ? "text-muted-foreground" : "text-foreground"}`}
+                          >
+                            {rescheduleFromJob ? (
+                              <ReschedulePopover
+                                currentDate={d}
+                                dim={!!dim}
+                                onConfirm={(picked) => rescheduleFromJob(job.id, toDateKey(picked))}
+                              />
+                            ) : (
+                              <CalendarIcon
+                                className={`h-3.5 w-3.5 ${dim ? "text-muted-foreground" : "text-primary"}`}
+                              />
+                            )}
+                            {d.toLocaleDateString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                            })}
+                          </span>
+                          <Badge
+                            variant="outline"
+                            className={
+                              dim
+                                ? "border-muted-foreground/30 text-muted-foreground"
+                                : "border-accent/50 text-accent"
+                            }
+                          >
+                            <MapPin className="mr-1 h-3 w-3" />
+                            {job.bay}
+                          </Badge>
+                          <Badge
+                            variant="outline"
+                            className="border-muted-foreground/30 text-muted-foreground"
+                          >
+                            {job.shift === "ALL_DAY" ? "All Day" : job.shift}
+                          </Badge>
+                          <span
+                            className={`flex-1 rounded px-2 py-0.5 text-xs font-medium ${dim ? "bg-muted/40 text-muted-foreground" : workColorClass(job.work)}`}
+                          >
+                            {job.work}
+                            {job.color ? ` — ${job.color}` : ""}
+                          </span>
+                          <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <User className="h-3 w-3" />
+                            {job.employee}
+                          </span>
+                          {removeJob && (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label="Delete task"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDeleteJob(job);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.stopPropagation();
+                                  setDeleteJob(job);
+                                }
+                              }}
+                              className="ml-auto cursor-pointer rounded p-1 text-muted-foreground hover:bg-transparent hover:text-destructive"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </span>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </button>
+              </li>
+            );
+          })}
         </ul>
       )}
 
-      <Dialog
-        open={openTruck !== null}
-        onOpenChange={(o) => !o && setOpenTruck(null)}
-      >
+      <Dialog open={openTruck !== null} onOpenChange={(o) => !o && setOpenTruck(null)}>
         <DialogContent className="max-w-5xl">
           {openTruck && (
             <>
@@ -1018,10 +1225,7 @@ export function TruckSchedule({
         </DialogContent>
       </Dialog>
 
-      <Dialog
-        open={addFor !== null}
-        onOpenChange={(o) => !o && setAddFor(null)}
-      >
+      <Dialog open={addFor !== null} onOpenChange={(o) => !o && setAddFor(null)}>
         <DialogContent className="max-w-lg">
           {addFor && (
             <>
@@ -1051,11 +1255,9 @@ export function TruckSchedule({
       </Dialog>
 
       <Dialog open={newTruckOpen} onOpenChange={setNewTruckOpen}>
-        <DialogContent className="w-[calc(100%-2rem)] max-w-4xl">
+        <DialogContent className="flex max-h-[95vh] w-[calc(100%-2rem)] max-w-5xl flex-col">
           <DialogHeader>
-            <DialogTitle className="font-display text-2xl tracking-wider">
-              New Truck
-            </DialogTitle>
+            <DialogTitle className="font-display text-2xl tracking-wider">New Truck</DialogTitle>
             <p className="text-sm text-muted-foreground">
               Enter the truck ID and click days on the week to schedule work.
             </p>
@@ -1133,6 +1335,58 @@ export function TruckSchedule({
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={deleteTruck !== null} onOpenChange={(o) => !o && setDeleteTruck(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete truck {deleteTruck}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This permanently removes the truck and all of its scheduled jobs. This cannot be
+              undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (!deleteTruck || !removeJob) return;
+                const ids = jobs.filter((j) => j.truckId === deleteTruck).map((j) => j.id);
+                for (const id of ids) removeJob(id);
+                removeTruckStatus(deleteTruck);
+                toast.success(`Deleted ${deleteTruck}`);
+                setDeleteTruck(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+
+      <AlertDialog open={deleteJob !== null} onOpenChange={(o) => !o && setDeleteJob(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Please confirm</AlertDialogTitle>
+            <AlertDialogDescription>
+              Are you sure you want to delete this task? This action cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                if (deleteJob && removeJob) removeJob(deleteJob.id);
+                setDeleteJob(null);
+              }}
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

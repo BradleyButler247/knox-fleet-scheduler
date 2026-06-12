@@ -44,7 +44,7 @@ export const Route = createFileRoute("/")({
 type Mode = "schedule" | "form";
 
 function Index() {
-  const { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck } = useJobs();
+  const { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck, rescheduleFromJob } = useJobs();
   const today = new Date();
   const [month, setMonth] = useState<Date>(
     new Date(today.getFullYear(), today.getMonth(), 1),
@@ -284,9 +284,9 @@ function Index() {
           </TabsContent>
 
           <TabsContent value="bay" className="mt-4">
-            <Card className="min-h-[calc(100dvh-13rem)]">
-              <CardContent className="pt-6 h-full">
-                <BayGrid date={today} jobs={jobs} showCompany />
+            <Card>
+              <CardContent className="pt-6">
+                <BayGrid date={today} jobs={jobs} showCompany addJob={addJob} removeJob={removeJob} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -295,7 +295,7 @@ function Index() {
           <TabsContent value="truck" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} />
+                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -322,7 +322,7 @@ function Index() {
           <TabsContent value="bay" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <BayGrid date={today} jobs={jobs} />
+                <BayGrid date={today} jobs={jobs} addJob={addJob} removeJob={removeJob} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -370,7 +370,7 @@ function Index() {
           <TabsContent value="truck" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} />
+                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} />
               </CardContent>
             </Card>
           </TabsContent>
