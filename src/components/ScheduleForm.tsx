@@ -59,7 +59,7 @@ export function pickBayForTask(
   if (task === "Sandblast") return "Sandblast Area";
   if (task === "Sanding") return pickFromOptions(["Bay 1", "Bay 2", "Bay 3"]);
   if (task.startsWith("Paint")) return pickFromOptions(["Paint Booth 1", "Paint Booth 2"]);
-  return "";
+  return "Unassigned";
 }
 
 export function addBusinessDays(date: Date, days: number): Date {
@@ -145,7 +145,7 @@ export function ScheduleForm({
       toast.error("Fill in truck ID and work to be done");
       return;
     }
-    const finalBay = bay.trim();
+    const finalBay = bay.trim() || "Unassigned";
     const dateKey = isEdit ? dateKeyState : toDateKey(selectedDate);
     const normalizedTruck = truckId.trim().toUpperCase();
 
@@ -154,16 +154,28 @@ export function ScheduleForm({
       const startDate = new Date(`${dateKey}T00:00:00`);
       const scheduled: { date: string; bay: string; shift: Shift }[] = [];
       let paintIdx = 0;
+      let paintBay = "";
       tasks.forEach((taskName, i) => {
         const d = i === 0 ? startDate : addBusinessDays(startDate, i);
         const tDateKey = toDateKey(d);
         const isPaint = taskName.startsWith("Paint");
         const paintColor = isPaint ? (mixerColors[paintIdx] ?? "").trim() : "";
         if (isPaint) paintIdx++;
-        const chosenBay = pickBayForTask(taskName, tDateKey, shift, [
-          ...existingJobs,
-          ...scheduled,
-        ]);
+        let chosenBay: string;
+        if (isPaint) {
+          if (!paintBay) {
+            paintBay = pickBayForTask(taskName, tDateKey, shift, [
+              ...existingJobs,
+              ...scheduled,
+            ]);
+          }
+          chosenBay = paintBay;
+        } else {
+          chosenBay = pickBayForTask(taskName, tDateKey, shift, [
+            ...existingJobs,
+            ...scheduled,
+          ]);
+        }
         scheduled.push({ date: tDateKey, bay: chosenBay, shift });
         onSubmit({
           truckId: normalizedTruck,
@@ -299,6 +311,8 @@ export function ScheduleForm({
           onValueChange={(v) => {
             setWorkType(v);
             if (v === "Mixer 2 Color" || v === "Mixer 3 Color") setBay("Bay 4");
+            if (v === "Assembly" || v === "Disassembly") setBay("Bay 4");
+            if (v === "Sandblast") setBay("Sandblast Area");
           }}
         >
           <SelectTrigger id="work">

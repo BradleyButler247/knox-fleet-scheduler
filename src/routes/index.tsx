@@ -286,7 +286,7 @@ function Index() {
           <TabsContent value="bay" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <BayGrid date={today} jobs={jobs} showCompany addJob={addJob} removeJob={removeJob} />
+                <BayGrid date={today} jobs={jobs} showCompany addJob={addJob} removeJob={removeJob} updateJob={updateJob} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -295,7 +295,7 @@ function Index() {
           <TabsContent value="truck" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} />
+                <TruckSchedule jobs={jobs} addJob={addJob} updateJob={updateJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -322,7 +322,7 @@ function Index() {
           <TabsContent value="bay" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <BayGrid date={today} jobs={jobs} addJob={addJob} removeJob={removeJob} />
+                <BayGrid date={today} jobs={jobs} addJob={addJob} removeJob={removeJob} updateJob={updateJob} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -370,7 +370,7 @@ function Index() {
           <TabsContent value="truck" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <TruckSchedule jobs={jobs} addJob={addJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} />
+                <TruckSchedule jobs={jobs} addJob={addJob} updateJob={updateJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} />
               </CardContent>
             </Card>
           </TabsContent>

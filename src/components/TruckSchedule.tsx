@@ -87,12 +87,14 @@ function WeekGrid({
   itemsByDay,
   onAddJob,
   onRemoveItem,
+  onEditItem,
   roomy = false,
 }: {
   weekStart: Date;
   itemsByDay: Map<string, WeekItem[]>;
   onAddJob: (date: Date) => void;
   onRemoveItem?: (id: string) => void;
+  onEditItem?: (id: string) => void;
   roomy?: boolean;
 }) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -147,28 +149,55 @@ function WeekGrid({
                   dayItems.map((item) => (
                     <div
                       key={item.id}
-                      className="relative min-w-0 rounded border border-border/70 bg-background/60 p-1.5 pr-5 text-[11px] leading-snug"
+                      onClick={(e) => {
+                        if (!onEditItem) return;
+                        e.stopPropagation();
+                        onEditItem(item.id);
+                      }}
+                      className={`relative min-w-0 rounded border border-border/70 bg-background/60 p-1.5 pr-9 text-[11px] leading-snug ${onEditItem ? "cursor-pointer hover:border-primary/60 hover:bg-background" : ""}`}
                     >
-                      {onRemoveItem && (
-                        <span
-                          role="button"
-                          tabIndex={0}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            onRemoveItem(item.id);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" || e.key === " ") {
+                      <div className="absolute right-0.5 top-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                        {onEditItem && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onEditItem(item.id);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.stopPropagation();
+                                onEditItem(item.id);
+                              }
+                            }}
+                            aria-label="Edit"
+                            className="cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </span>
+                        )}
+                        {onRemoveItem && (
+                          <span
+                            role="button"
+                            tabIndex={0}
+                            onClick={(e) => {
                               e.stopPropagation();
                               onRemoveItem(item.id);
-                            }
-                          }}
-                          aria-label="Remove"
-                          className="absolute right-0.5 top-0.5 cursor-pointer rounded p-0.5 text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover:opacity-100"
-                        >
-                          <X className="h-3 w-3" />
-                        </span>
-                      )}
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" || e.key === " ") {
+                                e.stopPropagation();
+                                onRemoveItem(item.id);
+                              }
+                            }}
+                            aria-label="Remove"
+                            className="cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          >
+                            <X className="h-3 w-3" />
+                          </span>
+                        )}
+                      </div>
                       <div className="min-w-0 space-y-1">
                         <div className="flex min-w-0 items-start gap-1 text-accent">
                           <MapPin className="mt-0.5 h-3 w-3 shrink-0" />
@@ -207,10 +236,14 @@ function TruckWeekView({
   truckId,
   jobs,
   onAddJob,
+  onEditItem,
+  onRemoveItem,
 }: {
   truckId: string;
   jobs: Job[];
   onAddJob: (date: Date) => void;
+  onEditItem?: (id: string) => void;
+  onRemoveItem?: (id: string) => void;
 }) {
   const truckJobs = useMemo(() => jobs.filter((j) => j.truckId === truckId), [jobs, truckId]);
 
@@ -238,7 +271,14 @@ function TruckWeekView({
   return (
     <div className="space-y-4 max-h-[70vh] overflow-y-auto pr-1">
       {weeks.map((w) => (
-        <WeekGrid key={toDateKey(w)} weekStart={w} itemsByDay={jobsByDay} onAddJob={onAddJob} />
+        <WeekGrid
+          key={toDateKey(w)}
+          weekStart={w}
+          itemsByDay={jobsByDay}
+          onAddJob={onAddJob}
+          onEditItem={onEditItem}
+          onRemoveItem={onRemoveItem}
+        />
       ))}
       <Button
         type="button"
@@ -281,24 +321,32 @@ const WORK_OPTIONS = [
 function PendingJobForm({
   date,
   existingPending = [],
+  initial,
   onAdd,
   onAddMany,
   onCancel,
 }: {
   date: Date;
   existingPending?: PendingJob[];
+  initial?: Partial<Omit<PendingJob, "id" | "date">>;
   onAdd: (j: Omit<PendingJob, "id" | "date">) => void;
   onAddMany?: (jobs: Omit<PendingJob, "id">[]) => void;
   onCancel: () => void;
 }) {
-  const [workType, setWorkType] = useState<string>("");
-  const [workOther, setWorkOther] = useState("");
-  const [bay, setBay] = useState("");
-  const [employee, setEmployee] = useState("");
-  const [shift, setShift] = useState<Shift>("ALL_DAY");
-  const [color, setColor] = useState("");
+  const initialWorkType = initial?.work
+    ? (WORK_OPTIONS as readonly string[]).includes(initial.work)
+      ? initial.work
+      : "Other"
+    : "";
+  const [workType, setWorkType] = useState<string>(initialWorkType);
+  const [workOther, setWorkOther] = useState(initialWorkType === "Other" ? (initial?.work ?? "") : "");
+  const [bay, setBay] = useState(initial?.bay && initial.bay !== "Unassigned" ? initial.bay : "");
+  const [employee, setEmployee] = useState(initial?.employee ?? "");
+  const [shift, setShift] = useState<Shift>(initial?.shift ?? "ALL_DAY");
+  const [color, setColor] = useState(initial?.color ?? "");
   const [mixerColors, setMixerColors] = useState<string[]>(["", "", ""]);
   const isMixer = workType === "Mixer 2 Color" || workType === "Mixer 3 Color";
+  const isEditing = !!initial;
   const resolvedWork = workType === "Other" ? workOther.trim() : workType;
 
   return (
@@ -432,7 +480,7 @@ function PendingJobForm({
               toast.error("Select work to be done");
               return;
             }
-            if (isMixer && onAddMany) {
+            if (isMixer && onAddMany && !isEditing) {
               const tasks = MIXER_PRESETS[workType];
               const startDate = new Date(date);
               const scheduled: { date: string; bay: string; shift: Shift }[] = [];
@@ -463,15 +511,16 @@ function PendingJobForm({
             }
             onAdd({
               work: resolvedWork,
-              bay,
+              bay: bay.trim() || "Unassigned",
               employee: employee.trim(),
               shift,
               ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
             });
           }}
         >
-          Add to day
+          {isEditing ? "Save changes" : "Add to day"}
         </Button>
+
       </div>
     </div>
   );
@@ -674,21 +723,38 @@ function MobileTaskRows({
   );
 }
 
-function NewTruckForm({
-  onCreate,
+function TruckScheduleForm({
+  mode,
+  initialTruckId = "",
+  initialCompany = "",
+  initialPending = [],
+  onSubmit,
   onClose,
 }: {
-  onCreate: (truckId: string, company: string, jobs: PendingJob[]) => void;
+  mode: "create" | "edit";
+  initialTruckId?: string;
+  initialCompany?: string;
+  initialPending?: PendingJob[];
+  onSubmit: (truckId: string, company: string, jobs: PendingJob[]) => void;
   onClose: () => void;
 }) {
-  const [truckId, setTruckId] = useState("");
-  const [company, setCompany] = useState("");
-  const [pending, setPending] = useState<PendingJob[]>([]);
+  const [truckId, setTruckId] = useState(initialTruckId);
+  const [company, setCompany] = useState(initialCompany);
+  const [pending, setPending] = useState<PendingJob[]>(initialPending);
   const [weekCount, setWeekCount] = useState(1);
   const [weeksBack, setWeeksBack] = useState(0);
   const [addFor, setAddFor] = useState<Date | null>(null);
+  const [editFor, setEditFor] = useState<PendingJob | null>(null);
 
-  const baseWeek = useMemo(() => startOfWeek(new Date()), []);
+  const baseWeek = useMemo(() => {
+    if (mode === "edit" && initialPending.length > 0) {
+      const earliest = initialPending
+        .map((p) => new Date(`${p.date}T00:00:00`))
+        .sort((a, b) => a.getTime() - b.getTime())[0];
+      return startOfWeek(earliest);
+    }
+    return startOfWeek(new Date());
+  }, [mode, initialPending]);
   const firstWeek = useMemo(() => addDays(baseWeek, -weeksBack * 7), [baseWeek, weeksBack]);
   const weeks = Array.from({ length: weekCount + weeksBack }, (_, i) => addDays(firstWeek, i * 7));
 
@@ -702,7 +768,7 @@ function NewTruckForm({
     return map;
   }, [pending]);
 
-  const handleCreate = () => {
+  const handleSubmit = () => {
     if (!truckId.trim()) {
       toast.error("Enter a truck ID");
       return;
@@ -717,25 +783,30 @@ function NewTruckForm({
         return;
       }
     }
-    onCreate(truckId.trim().toUpperCase(), company.trim(), pending);
+    onSubmit(truckId.trim().toUpperCase(), company.trim(), pending);
   };
+
+  const submitLabel =
+    mode === "create"
+      ? `Create truck (${pending.length} ${pending.length === 1 ? "job" : "jobs"})`
+      : `Save changes (${pending.length} ${pending.length === 1 ? "job" : "jobs"})`;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col space-y-4 pr-1">
       <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
         <div className="space-y-1.5">
-          <Label htmlFor="new-truck">Truck ID</Label>
+          <Label htmlFor="ts-truck">Truck ID</Label>
           <Input
-            id="new-truck"
+            id="ts-truck"
             placeholder="Enter truck ID"
             value={truckId}
             onChange={(e) => setTruckId(e.target.value)}
           />
         </div>
         <div className="space-y-1.5">
-          <Label htmlFor="new-truck-company">Company</Label>
+          <Label htmlFor="ts-truck-company">Company</Label>
           <Input
-            id="new-truck-company"
+            id="ts-truck-company"
             placeholder="Enter company name"
             value={company}
             onChange={(e) => setCompany(e.target.value)}
@@ -746,7 +817,7 @@ function NewTruckForm({
       <div className="space-y-2">
         <Label>Schedule</Label>
         <p className="hidden md:block text-xs text-muted-foreground">
-          Click any day to add work for this truck.
+          Click any day to add work for this truck. Click a task to edit it.
         </p>
       </div>
 
@@ -760,6 +831,10 @@ function NewTruckForm({
             onAddJob={(d) => setAddFor(d)}
             roomy
             onRemoveItem={(id) => setPending((prev) => prev.filter((p) => p.id !== id))}
+            onEditItem={(id) => {
+              const item = pending.find((p) => p.id === id);
+              if (item) setEditFor(item);
+            }}
           />
         ))}
         <div className="grid grid-cols-2 gap-2">
@@ -791,8 +866,8 @@ function NewTruckForm({
         <Button variant="ghost" onClick={onClose}>
           Cancel
         </Button>
-        <Button onClick={handleCreate} className="font-display tracking-wider">
-          Create truck ({pending.length} {pending.length === 1 ? "job" : "jobs"})
+        <Button onClick={handleSubmit} className="font-display tracking-wider">
+          {submitLabel}
         </Button>
       </div>
 
@@ -830,9 +905,45 @@ function NewTruckForm({
           )}
         </DialogContent>
       </Dialog>
+
+      <Dialog open={editFor !== null} onOpenChange={(o) => !o && setEditFor(null)}>
+        <DialogContent className="max-w-md">
+          {editFor && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-display text-xl tracking-wider">Edit Task</DialogTitle>
+              </DialogHeader>
+              <PendingJobForm
+                date={new Date(`${editFor.date}T00:00:00`)}
+                existingPending={pending}
+                initial={{
+                  work: editFor.work,
+                  bay: editFor.bay,
+                  employee: editFor.employee,
+                  shift: editFor.shift,
+                  color: editFor.color,
+                }}
+                onCancel={() => setEditFor(null)}
+                onAdd={(j) => {
+                  setPending((prev) =>
+                    prev.map((p) =>
+                      p.id === editFor.id
+                        ? { ...p, ...j, date: editFor.date }
+                        : p,
+                    ),
+                  );
+                  setEditFor(null);
+                }}
+              />
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
+
+
 
 function ReschedulePopover({
   currentDate,
@@ -895,6 +1006,7 @@ function ReschedulePopover({
 export function TruckSchedule({
   jobs,
   addJob,
+  updateJob,
   renameTruck,
   onToggleComplete,
   removeJob,
@@ -902,6 +1014,7 @@ export function TruckSchedule({
 }: {
   jobs: Job[];
   addJob: (j: Omit<Job, "id" | "createdAt">) => void;
+  updateJob?: (id: string, updates: Omit<Job, "id" | "createdAt">) => void;
   renameTruck?: (oldId: string, newId: string) => void;
   onToggleComplete?: (id: string) => void;
   removeJob?: (id: string) => void;
@@ -912,7 +1025,6 @@ export function TruckSchedule({
   const [addFor, setAddFor] = useState<{ truckId: string; date: Date } | null>(null);
   const [newTruckOpen, setNewTruckOpen] = useState(false);
   const [editTruck, setEditTruck] = useState<string | null>(null);
-  const [editValue, setEditValue] = useState("");
   const [deleteTruck, setDeleteTruck] = useState<string | null>(null);
   const [deleteJob, setDeleteJob] = useState<Job | null>(null);
   const { getStatus, setField, renameTruckStatus, removeTruckStatus } = useTruckStatus();
@@ -1073,13 +1185,11 @@ export function TruckSchedule({
                           onClick={(e) => {
                             e.stopPropagation();
                             setEditTruck(truckId);
-                            setEditValue(truckId);
                           }}
                           onKeyDown={(e) => {
                             if (e.key === "Enter" || e.key === " ") {
                               e.stopPropagation();
                               setEditTruck(truckId);
-                              setEditValue(truckId);
                             }
                           }}
                           className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground"
@@ -1219,6 +1329,11 @@ export function TruckSchedule({
                 truckId={openTruck}
                 jobs={jobs}
                 onAddJob={(d) => setAddFor({ truckId: openTruck, date: d })}
+                onEditItem={() => setEditTruck(openTruck)}
+                onRemoveItem={(id) => {
+                  const job = jobs.find((j) => j.id === id && j.truckId === openTruck);
+                  if (job) setDeleteJob(job);
+                }}
               />
             </>
           )}
@@ -1262,9 +1377,10 @@ export function TruckSchedule({
               Enter the truck ID and click days on the week to schedule work.
             </p>
           </DialogHeader>
-          <NewTruckForm
+          <TruckScheduleForm
+            mode="create"
             onClose={() => setNewTruckOpen(false)}
-            onCreate={(truckId, company, items) => {
+            onSubmit={(truckId, company, items) => {
               for (const it of items) {
                 addJob({
                   truckId,
@@ -1286,55 +1402,115 @@ export function TruckSchedule({
       </Dialog>
 
       <Dialog open={editTruck !== null} onOpenChange={(o) => !o && setEditTruck(null)}>
-        <DialogContent className="max-w-sm">
-          {editTruck && (
-            <>
-              <DialogHeader>
-                <DialogTitle className="font-display text-2xl tracking-wider">
-                  Edit Truck
-                </DialogTitle>
-              </DialogHeader>
-              <div className="space-y-3">
-                <div className="space-y-1.5">
-                  <Label htmlFor="edit-truck-id">Truck ID</Label>
-                  <Input
-                    id="edit-truck-id"
-                    value={editValue}
-                    onChange={(e) => setEditValue(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button variant="ghost" onClick={() => setEditTruck(null)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      const next = editValue.trim().toUpperCase();
-                      if (!next) {
-                        toast.error("Enter a truck ID");
-                        return;
+        <DialogContent className="flex max-h-[95vh] w-[calc(100%-2rem)] max-w-5xl flex-col">
+          {editTruck && (() => {
+            const truckJobs = jobs.filter((j) => j.truckId === editTruck);
+            const initialCompany =
+              truckJobs.find((j) => (j.company ?? "").trim() !== "")?.company?.trim() ?? "";
+            const initialPending: PendingJob[] = truckJobs.map((j) => ({
+              id: j.id,
+              date: j.date,
+              work: j.work,
+              bay: j.bay,
+              employee: j.employee,
+              shift: j.shift,
+              ...(j.color ? { color: j.color } : {}),
+            }));
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="font-display text-2xl tracking-wider">
+                    Edit Truck
+                  </DialogTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Update truck details, add new work, or click a scheduled task to edit it.
+                  </p>
+                </DialogHeader>
+                <TruckScheduleForm
+                  mode="edit"
+                  initialTruckId={editTruck}
+                  initialCompany={initialCompany}
+                  initialPending={initialPending}
+                  onClose={() => setEditTruck(null)}
+                  onSubmit={(nextTruckId, nextCompany, items) => {
+                    if (nextTruckId !== editTruck && grouped.some((g) => g.truckId === nextTruckId)) {
+                      toast.error("A truck with that ID already exists");
+                      return;
+                    }
+                    const originalIds = new Set(truckJobs.map((j) => j.id));
+                    const pendingIds = new Set(items.map((p) => p.id));
+                    const companyVal = nextCompany || undefined;
+
+                    if (nextTruckId !== editTruck) {
+                      renameTruck?.(editTruck, nextTruckId);
+                      renameTruckStatus(editTruck, nextTruckId);
+                    }
+
+                    // Removals
+                    if (removeJob) {
+                      for (const j of truckJobs) {
+                        if (!pendingIds.has(j.id)) removeJob(j.id);
                       }
-                      if (next !== editTruck && grouped.some((g) => g.truckId === next)) {
-                        toast.error("A truck with that ID already exists");
-                        return;
+                    }
+
+                    // Updates + additions
+                    for (const it of items) {
+                      if (originalIds.has(it.id) && updateJob) {
+                        const orig = truckJobs.find((j) => j.id === it.id)!;
+                        const changed =
+                          orig.work !== it.work ||
+                          orig.bay !== it.bay ||
+                          orig.employee !== it.employee ||
+                          orig.date !== it.date ||
+                          orig.shift !== it.shift ||
+                          (orig.color ?? "") !== (it.color ?? "") ||
+                          (orig.company ?? "") !== (companyVal ?? "") ||
+                          orig.truckId !== nextTruckId;
+                        if (changed) {
+                          updateJob(it.id, {
+                            truckId: nextTruckId,
+                            work: it.work,
+                            bay: it.bay,
+                            employee: it.employee,
+                            date: it.date,
+                            shift: it.shift,
+                            company: companyVal,
+                            color: it.color,
+                            completed: orig.completed,
+                          });
+                        }
+                      } else if (!originalIds.has(it.id)) {
+                        addJob({
+                          truckId: nextTruckId,
+                          work: it.work,
+                          bay: it.bay,
+                          employee: it.employee,
+                          date: it.date,
+                          shift: it.shift,
+                          company: companyVal,
+                          color: it.color,
+                        });
                       }
-                      if (next !== editTruck) {
-                        renameTruck?.(editTruck, next);
-                        renameTruckStatus(editTruck, next);
-                        toast.success(`Renamed to ${next}`);
+                    }
+
+                    // Sync company on any untouched original jobs if company changed
+                    if (updateJob) {
+                      for (const j of truckJobs) {
+                        if (!pendingIds.has(j.id)) continue;
+                        // already handled above
                       }
-                      setEditTruck(null);
-                    }}
-                  >
-                    Save
-                  </Button>
-                </div>
-              </div>
-            </>
-          )}
+                    }
+
+                    toast.success(`Saved ${nextTruckId}`);
+                    setEditTruck(null);
+                  }}
+                />
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
+
 
       <AlertDialog open={deleteTruck !== null} onOpenChange={(o) => !o && setDeleteTruck(null)}>
         <AlertDialogContent>

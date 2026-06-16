@@ -1,4 +1,4 @@
-import { MapPin, Truck, StickyNote, ChevronDown, ChevronLeft, ChevronRight, User, Calendar as CalendarIcon, Plus, Trash2, X } from "lucide-react";
+import { MapPin, Truck, StickyNote, ChevronDown, ChevronLeft, ChevronRight, User, Calendar as CalendarIcon, Plus, Trash2, X, Pencil } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -29,7 +29,7 @@ type Cell = { bays: string[]; rowSpan?: number; empty?: boolean };
 
 const CELLS: Cell[] = [
   { bays: ["Outhouse"], rowSpan: 4 },
-  { bays: [], empty: true, rowSpan: 3 },
+  { bays: ["Unassigned"], rowSpan: 3 },
   { bays: ["Sandblast Area"], rowSpan: 3 },
   { bays: ["Paint Booth 1"], rowSpan: 3 },
   { bays: ["Paint Booth 2"], rowSpan: 3 },
@@ -73,12 +73,14 @@ export function BayGrid({
   showCompany = false,
   addJob,
   removeJob,
+  updateJob,
 }: {
   date: Date;
   jobs: Job[];
   showCompany?: boolean;
   addJob?: (j: Omit<Job, "id" | "createdAt">) => void;
   removeJob?: (id: string) => void;
+  updateJob?: (id: string, updates: Omit<Job, "id" | "createdAt">) => void;
 }) {
   const [selectedDate, setSelectedDate] = useState<Date>(date);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -89,6 +91,7 @@ export function BayGrid({
   const [activeCell, setActiveCell] = useState<Cell | null>(null);
   const [addForCell, setAddForCell] = useState<Cell | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Job | null>(null);
+  const [editJob, setEditJob] = useState<Job | null>(null);
   const [expandedCells, setExpandedCells] = useState<Set<number>>(new Set());
   const toggleExpanded = (i: number) => {
     setExpandedCells((prev) => {
@@ -290,6 +293,7 @@ export function BayGrid({
                           className={`min-w-0 flex-1 justify-start truncate text-[10px] px-1.5 py-0 ${workColorClass(j.work)} ${j.completed ? "line-through opacity-70" : ""}`}
                         >
                           {j.work}
+                          {j.color ? ` — ${j.color}` : ""}
                         </Badge>
                         {removeJob && (
                           <span
@@ -429,6 +433,21 @@ export function BayGrid({
                             {j.work}
                             {j.color ? ` — ${j.color}` : ""}
                           </Badge>
+                          {updateJob && (
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-6 w-6 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                              onClick={() => {
+                                setEditJob(j);
+                                setActiveCell(null);
+                              }}
+                              aria-label="Edit task"
+                            >
+                              <Pencil className="h-4 w-4" />
+                            </Button>
+                          )}
                           {removeJob && (
                             <Button
                               type="button"
@@ -475,6 +494,37 @@ export function BayGrid({
                   addJob(j);
                   setAddForCell(null);
                 }}
+              />
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={editJob !== null} onOpenChange={(o) => !o && setEditJob(null)}>
+        <DialogContent className="max-w-md">
+          {editJob && updateJob && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-display text-2xl tracking-wider">
+                  Edit Job — {editJob.truckId}
+                </DialogTitle>
+              </DialogHeader>
+              <ScheduleForm
+                selectedDate={new Date(`${editJob.date}T00:00:00`)}
+                initialJob={editJob}
+                existingJobs={jobs}
+                onSubmit={(j) => {
+                  updateJob(editJob.id, j);
+                  setEditJob(null);
+                }}
+                onDelete={
+                  removeJob
+                    ? (id) => {
+                        removeJob(id);
+                        setEditJob(null);
+                      }
+                    : undefined
+                }
               />
             </>
           )}
