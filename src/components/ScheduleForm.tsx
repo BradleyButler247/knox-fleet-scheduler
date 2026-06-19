@@ -154,7 +154,35 @@ export function ScheduleForm({
       const startDate = new Date(`${dateKey}T00:00:00`);
       const scheduled: { date: string; bay: string; shift: Shift }[] = [];
       let paintIdx = 0;
-      let paintBay = "";
+      const PAINT_COUNTER_KEY = "paint-booth-alternator-v1";
+      const SAND_COUNTER_KEY = "sanding-bay-rotator-v1";
+      let counter = 0;
+      try {
+        const raw = localStorage.getItem(PAINT_COUNTER_KEY);
+        counter = raw ? parseInt(raw, 10) || 0 : 0;
+      } catch {
+        counter = 0;
+      }
+      const paintBay = counter % 2 === 0 ? "Paint Booth 1" : "Paint Booth 2";
+      try {
+        localStorage.setItem(PAINT_COUNTER_KEY, String(counter + 1));
+      } catch {
+        /* ignore */
+      }
+      let sandCounter = 0;
+      try {
+        const raw = localStorage.getItem(SAND_COUNTER_KEY);
+        sandCounter = raw ? parseInt(raw, 10) || 0 : 0;
+      } catch {
+        sandCounter = 0;
+      }
+      const SAND_BAYS = ["Bay 1", "Bay 2", "Bay 3"];
+      const sandBay = SAND_BAYS[sandCounter % 3];
+      try {
+        localStorage.setItem(SAND_COUNTER_KEY, String(sandCounter + 1));
+      } catch {
+        /* ignore */
+      }
       tasks.forEach((taskName, i) => {
         const d = i === 0 ? startDate : addBusinessDays(startDate, i);
         const tDateKey = toDateKey(d);
@@ -163,19 +191,16 @@ export function ScheduleForm({
         if (isPaint) paintIdx++;
         let chosenBay: string;
         if (isPaint) {
-          if (!paintBay) {
-            paintBay = pickBayForTask(taskName, tDateKey, shift, [
-              ...existingJobs,
-              ...scheduled,
-            ]);
-          }
           chosenBay = paintBay;
+        } else if (taskName === "Sanding") {
+          chosenBay = sandBay;
         } else {
           chosenBay = pickBayForTask(taskName, tDateKey, shift, [
             ...existingJobs,
             ...scheduled,
           ]);
         }
+
         scheduled.push({ date: tDateKey, bay: chosenBay, shift });
         onSubmit({
           truckId: normalizedTruck,

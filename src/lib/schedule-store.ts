@@ -86,22 +86,24 @@ export function useJobs() {
       }
 
       // If the date changed, shift every other job for the same truck by the
-      // same number of days so their relative positions are preserved.
-      let deltaDays = 0;
+      // same number of BUSINESS days so their relative positions are preserved.
+      let deltaBusinessDays = 0;
       if (newDate && newDate !== oldDate) {
-        const a = new Date(`${oldDate}T00:00:00`).getTime();
-        const b = new Date(`${newDate}T00:00:00`).getTime();
-        deltaDays = Math.round((b - a) / 86400000);
+        deltaBusinessDays = businessDaysBetween(
+          new Date(`${oldDate}T00:00:00`),
+          new Date(`${newDate}T00:00:00`),
+        );
       }
 
       const finalUpdates = { ...updates, date: newDate };
 
       return prev.map((j) => {
         if (j.id === id) return { ...j, ...finalUpdates };
-        if (deltaDays !== 0 && j.truckId === truckId) {
-          const shifted = new Date(`${j.date}T00:00:00`);
-          shifted.setDate(shifted.getDate() + deltaDays);
-          bumpWeekendToMonday(shifted);
+        if (deltaBusinessDays !== 0 && j.truckId === truckId) {
+          const shifted = addBusinessDays(
+            new Date(`${j.date}T00:00:00`),
+            deltaBusinessDays,
+          );
           return { ...j, date: toDateKey(shifted) };
         }
         return j;
