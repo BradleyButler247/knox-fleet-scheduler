@@ -531,13 +531,13 @@ function PendingJobForm({
                     ]);
                 scheduled.push({ date: tDateKey, bay: chosenBay, shift });
                 out.push({
-                  date: tDateKey,
-                  work: taskName,
-                  bay: chosenBay,
-                  employee: employee.trim(),
-                  shift,
-                  ...(isPaint && paintColor ? { color: paintColor } : {}),
-                });
+                   date: tDateKey,
+                   work: isPaint ? "Paint" : taskName,
+                   bay: chosenBay,
+                   employee: employee.trim(),
+                   shift,
+                   ...(isPaint && paintColor ? { color: paintColor } : {}),
+                 });
               });
 
               onAddMany(out);

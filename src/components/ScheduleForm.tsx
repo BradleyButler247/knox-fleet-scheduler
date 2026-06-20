@@ -204,7 +204,7 @@ export function ScheduleForm({
         scheduled.push({ date: tDateKey, bay: chosenBay, shift });
         onSubmit({
           truckId: normalizedTruck,
-          work: taskName,
+          work: isPaint ? "Paint" : taskName,
           bay: chosenBay,
           employee: employee.trim(),
           date: tDateKey,
