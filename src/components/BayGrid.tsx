@@ -1,4 +1,4 @@
-import { MapPin, Truck, StickyNote, ChevronDown, ChevronLeft, ChevronRight, User, Calendar as CalendarIcon, Plus, Trash2, X, Pencil } from "lucide-react";
+import { MapPin, Truck, StickyNote, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, User, Calendar as CalendarIcon, Plus, Trash2, X, Pencil, GripVertical, Printer } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -25,22 +25,40 @@ import { ScheduleForm } from "@/components/ScheduleForm";
 import { useEffect, useRef, useState } from "react";
 import { toDateKey, type Job } from "@/lib/schedule-store";
 
-type Cell = { bays: string[]; rowSpan?: number; empty?: boolean };
+type Cell = {
+  bays: string[];
+  col: number;
+  row: number;
+  colSpan?: number;
+  rowSpan?: number;
+  empty?: boolean;
+};
 
 const CELLS: Cell[] = [
-  { bays: ["Outhouse"], rowSpan: 4 },
-  { bays: ["Unassigned"], rowSpan: 3 },
-  { bays: ["Sandblast Area"], rowSpan: 3 },
-  { bays: ["Paint Booth 1"], rowSpan: 3 },
-  { bays: ["Paint Booth 2"], rowSpan: 3 },
-  { bays: ["Yard"], rowSpan: 8 },
-  { bays: ["Bay 3"], rowSpan: 3 },
-  { bays: ["Bay 4"], rowSpan: 3 },
-  { bays: ["Bay 1"], rowSpan: 3 },
-  { bays: ["Bay 2"], rowSpan: 3 },
+  { bays: ["Unassigned"], col: 1, row: 1, rowSpan: 4 },
+  { bays: ["Outhouse"], col: 1, row: 5, rowSpan: 4 },
+  { bays: ["Yard"], col: 1, row: 9, rowSpan: 4 },
+  { bays: ["Sandblast Area"], col: 2, row: 1, colSpan: 2, rowSpan: 3 },
+  { bays: ["Paint Booth 1"], col: 2, row: 4, rowSpan: 3 },
+  { bays: ["Paint Booth 2"], col: 3, row: 4, rowSpan: 3 },
+  { bays: ["Bay 3"], col: 2, row: 7, rowSpan: 3 },
+  { bays: ["Bay 4"], col: 3, row: 7, rowSpan: 3 },
+  { bays: ["Bay 1"], col: 2, row: 10, rowSpan: 3 },
+  { bays: ["Bay 2"], col: 3, row: 10, rowSpan: 3 },
 ];
 
-const NOTES_KEY = "paint-shop-bay-notes-v1";
+const NOTES_KEY = "paint-shop-bay-notes-v2";
+
+function readNotesMap(): Record<string, string> {
+  try {
+    const raw = localStorage.getItem(NOTES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
 
 function bayLabel(b: string) {
   return /^\d+$/.test(b) ? `Bay ${b}` : b;
@@ -74,6 +92,7 @@ export function BayGrid({
   addJob,
   removeJob,
   updateJob,
+  reorderJobs,
 }: {
   date: Date;
   jobs: Job[];
@@ -81,6 +100,7 @@ export function BayGrid({
   addJob?: (j: Omit<Job, "id" | "createdAt">) => void;
   removeJob?: (id: string) => void;
   updateJob?: (id: string, updates: Omit<Job, "id" | "createdAt">) => void;
+  reorderJobs?: (updates: { id: string; priority: number }[]) => void;
 }) {
   const [selectedDate, setSelectedDate] = useState<Date>(date);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
@@ -92,34 +112,30 @@ export function BayGrid({
   const [addForCell, setAddForCell] = useState<Cell | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<Job | null>(null);
   const [editJob, setEditJob] = useState<Job | null>(null);
-  const [expandedCells, setExpandedCells] = useState<Set<number>>(new Set());
-  const toggleExpanded = (i: number) => {
-    setExpandedCells((prev) => {
-      const next = new Set(prev);
-      if (next.has(i)) next.delete(i);
-      else next.add(i);
-      return next;
-    });
-  };
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [expandedCells, setExpandedCells] = useState<Set<string>>(new Set());
 
   useEffect(() => setMounted(true), []);
 
-  useEffect(() => {
-    try {
-      setNotes(localStorage.getItem(NOTES_KEY) ?? "");
-    } catch {
-      /* ignore */
-    }
-  }, []);
+  const dateKey = toDateKey(selectedDate);
 
-  const handleNotesChange = (v: string) => {
+  useEffect(() => {
+    setNotes(readNotesMap()[dateKey] ?? "");
+  }, [dateKey]);
+
+  const handleNotesSave = (v: string) => {
     setNotes(v);
     try {
-      localStorage.setItem(NOTES_KEY, v);
+      const map = readNotesMap();
+      if (v) map[dateKey] = v;
+      else delete map[dateKey];
+      localStorage.setItem(NOTES_KEY, JSON.stringify(map));
     } catch {
       /* ignore */
     }
   };
+
 
   return (
     <div className="flex flex-col gap-3">
@@ -127,75 +143,86 @@ export function BayGrid({
         <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
           Showing schedule for
         </p>
-        <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-          <div className="flex items-center gap-1">
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label="Previous day"
-              className="hover:bg-primary hover:text-primary-foreground hover:border-primary"
-              onClick={() => {
-                const d = new Date(selectedDate);
-                d.setDate(d.getDate() - 1);
-                setSelectedDate(d);
-              }}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <PopoverTrigger asChild>
+        <div className="flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="icon"
+            aria-label="Print bay view"
+            className="hover:bg-primary hover:text-primary-foreground hover:border-primary print:hidden"
+            onClick={() => window.print()}
+          >
+            <Printer className="h-4 w-4" />
+          </Button>
+          <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
+            <div className="flex items-center gap-1">
               <Button
                 variant="outline"
-                className={cn(
-                  "justify-start gap-2 text-left font-normal hover:bg-primary hover:text-primary-foreground hover:border-primary",
-                  !selectedDate && "text-muted-foreground",
-                )}
-              >
-                <CalendarIcon className="h-4 w-4" />
-                {mounted
-                  ? selectedDate.toLocaleDateString(undefined, {
-                      weekday: "short",
-                      month: "short",
-                      day: "numeric",
-                      year: "numeric",
-                    })
-                  : ""}
-              </Button>
-            </PopoverTrigger>
-            <Button
-              variant="outline"
-              size="icon"
-              aria-label="Next day"
-              className="hover:bg-primary hover:text-primary-foreground hover:border-primary"
-              onClick={() => {
-                const d = new Date(selectedDate);
-                d.setDate(d.getDate() + 1);
-                setSelectedDate(d);
-              }}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-          <PopoverContent className="w-auto p-0" align="end">
-            <Calendar
-              mode="single"
-              selected={selectedDate}
-              onSelect={(d) => {
-                if (d) {
+                size="icon"
+                aria-label="Previous day"
+                className="hover:bg-primary hover:text-primary-foreground hover:border-primary print:hidden"
+                onClick={() => {
+                  const d = new Date(selectedDate);
+                  d.setDate(d.getDate() - 1);
                   setSelectedDate(d);
-                  setDatePickerOpen(false);
-                }
-              }}
-              initialFocus
-              className={cn("p-3 pointer-events-auto")}
-            />
-          </PopoverContent>
-        </Popover>
+                }}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  className={cn(
+                    "justify-start gap-2 text-left font-normal hover:bg-primary hover:text-primary-foreground hover:border-primary",
+                    !selectedDate && "text-muted-foreground",
+                  )}
+                >
+                  <CalendarIcon className="h-4 w-4" />
+                  {mounted
+                    ? selectedDate.toLocaleDateString(undefined, {
+                        weekday: "short",
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })
+                    : ""}
+                </Button>
+              </PopoverTrigger>
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label="Next day"
+                className="hover:bg-primary hover:text-primary-foreground hover:border-primary print:hidden"
+                onClick={() => {
+                  const d = new Date(selectedDate);
+                  d.setDate(d.getDate() + 1);
+                  setSelectedDate(d);
+                }}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+            <PopoverContent className="w-auto p-0 print:hidden" align="end">
+              <Calendar
+                mode="single"
+                selected={selectedDate}
+                onSelect={(d) => {
+                  if (d) {
+                    setSelectedDate(d);
+                    setDatePickerOpen(false);
+                  }
+                }}
+                initialFocus
+                className={cn("p-3 pointer-events-auto")}
+              />
+            </PopoverContent>
+          </Popover>
+        </div>
       </div>
 
       <div
-        className={cn("grid grid-cols-3 gap-2", expandedCells.size === 0 && "overflow-hidden")}
+        className="grid grid-cols-3 gap-2 overflow-hidden"
         style={{
-          [expandedCells.size > 0 ? "minHeight" : "height"]: `calc(100dvh - 18rem + ${notesExtra}px)`,
+          minHeight: `calc(100dvh - 10rem + ${notesExtra}px)`,
           gridTemplateRows: `repeat(12, minmax(0, 1fr)) minmax(0, ${120 + notesExtra}px)`,
         }}
       >
@@ -205,15 +232,18 @@ export function BayGrid({
             <div
               key={i}
               aria-hidden
-              style={cell.rowSpan ? { gridRow: `span ${cell.rowSpan}` } : undefined}
+              style={{
+                gridColumn: `${cell.col} / span ${cell.colSpan ?? 1}`,
+                gridRow: `${cell.row} / span ${cell.rowSpan ?? 1}`,
+              }}
             />
           );
         }
-        const cellJobs = dayJobs.filter((j) => cell.bays.includes(j.bay));
+        const cellJobs = dayJobs
+          .filter((j) => cell.bays.includes(j.bay))
+          .sort((a, b) => (a.priority ?? a.createdAt) - (b.priority ?? b.createdAt));
         const label = cell.bays.map(bayLabel).join(" / ");
-        const isExpanded = expandedCells.has(i);
         const baseSpan = cell.rowSpan ?? 1;
-        const expandedSpan = isExpanded ? Math.max(baseSpan, cellJobs.length + 2) : baseSpan;
         return (
           <button
             type="button"
@@ -223,7 +253,10 @@ export function BayGrid({
               "flex flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/50 hover:bg-accent/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               "overflow-hidden",
             )}
-            style={{ gridRow: `span ${expandedSpan}` }}
+            style={{
+              gridColumn: `${cell.col} / span ${cell.colSpan ?? 1}`,
+              gridRow: `${cell.row} / span ${baseSpan}`,
+            }}
           >
             <div className="flex items-center gap-1.5 border-b border-border/60 pb-2">
               <MapPin className="h-3.5 w-3.5 text-accent" />
@@ -254,120 +287,131 @@ export function BayGrid({
                 </span>
               )}
             </div>
-            <div className={cn("flex-1 space-y-1.5 min-h-0", isExpanded ? "overflow-y-auto" : "overflow-hidden") }>
-              {(() => {
-                const maxVisible = Math.max(1, (cell.rowSpan ?? 3) - 1);
-                const visible = isExpanded ? cellJobs : cellJobs.slice(0, maxVisible);
-                const hidden = cellJobs.length - visible.length;
-                if (cellJobs.length === 0) {
-                  return <p className="text-xs text-muted-foreground/60">No jobs</p>;
-                }
-                return (
-                  <>
-                    {visible.map((j) => (
-                      <div
-                        key={j.id}
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setActiveCell(cell);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
+            <div className="flex-1 space-y-1.5 min-h-0 overflow-y-auto">
+              {cellJobs.length === 0 ? (
+                <p className="text-xs text-muted-foreground/60">No jobs</p>
+              ) : (
+                (() => {
+                  const isExpanded = expandedCells.has(cell.bays.join(","));
+                  const shouldTruncate = cellJobs.length >= 5 && !isExpanded;
+                  return (
+                    <>
+                      {cellJobs.map((j, idx) => (
+                        <div
+                          key={j.id}
+                          role="button"
+                          tabIndex={0}
+                          onClick={(e) => {
                             e.stopPropagation();
                             setActiveCell(cell);
-                          }
-                        }}
-                        className={`flex min-w-0 cursor-pointer items-center gap-1.5 rounded border border-border/60 bg-background/50 px-2 py-1 text-xs hover:bg-accent/20 ${
-                          j.completed ? "opacity-50 line-through" : ""
-                        }`}
-                      >
-                        <Truck className="h-3 w-3 text-primary shrink-0" />
-                        <span className="shrink-0 truncate font-medium">
-                          {j.truckId}
-                          {showCompany && j.company ? ` - ${j.company}` : ""}
-                        </span>
-                        <Badge
-                          variant="outline"
-                          className={`min-w-0 flex-1 justify-start truncate text-[10px] px-1.5 py-0 ${workColorClass(j.work)} ${j.completed ? "line-through opacity-70" : ""}`}
-                        >
-                          {j.work}
-                          {j.color ? ` — ${j.color}` : ""}
-                        </Badge>
-                        {removeJob && (
-                          <span
-                            role="button"
-                            tabIndex={0}
-                            aria-label="Delete task"
-                            onClick={(e) => {
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" || e.key === " ") {
                               e.stopPropagation();
-                              setConfirmDelete(j);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter" || e.key === " ") {
-                                e.stopPropagation();
-                                setConfirmDelete(j);
-                              }
-                            }}
-                            className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-transparent hover:text-destructive"
-                          >
-                            <Trash2 className="h-3 w-3" />
-                          </span>
-                        )}
-                      </div>
-                    ))}
-                    {hidden > 0 && (
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleExpanded(i);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
+                              setActiveCell(cell);
+                            }
+                          }}
+                          className={cn(
+                            "flex min-w-0 cursor-pointer flex-col gap-0.5 rounded border border-border/60 bg-background/50 px-2 py-1 text-xs hover:bg-accent/20",
+                            j.completed ? "opacity-50" : "",
+                            shouldTruncate && idx >= 4 ? "hidden print:flex" : ""
+                          )}
+                        >
+                          <div className="flex items-center gap-1.5">
+                            <Truck className="h-3 w-3 text-primary shrink-0" />
+                            <span className={cn("shrink-0 truncate font-medium", j.completed ? "line-through" : "")}>
+                              {j.truckId}
+                              {showCompany && j.company ? ` - ${j.company}` : ""}
+                            </span>
+                            <Badge
+                              variant="outline"
+                              className={cn(
+                                "min-w-0 flex-1 justify-start truncate text-[10px] px-1.5 py-0",
+                                workColorClass(j.work),
+                                j.completed ? "line-through opacity-70" : ""
+                              )}
+                            >
+                              {j.work}
+                              {j.color ? ` — ${j.color}` : ""}
+                            </Badge>
+                            {j.employee ? (
+                              <span className={cn("shrink-0 flex items-center gap-1 text-[10px] text-muted-foreground", j.completed ? "line-through opacity-70" : "")}>
+                                <User className="h-2.5 w-2.5 shrink-0" />
+                                <span className="truncate">{j.employee}</span>
+                              </span>
+                            ) : null}
+                            {removeJob && (
+                              <span
+                                role="button"
+                                tabIndex={0}
+                                aria-label="Delete task"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setConfirmDelete(j);
+                                }}
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter" || e.key === " ") {
+                                    e.stopPropagation();
+                                    setConfirmDelete(j);
+                                  }
+                                }}
+                                className="shrink-0 cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-transparent hover:text-destructive"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                      {shouldTruncate && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
                             e.stopPropagation();
-                            toggleExpanded(i);
-                          }
-                        }}
-                        className="block cursor-pointer rounded px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                      >
-                        +{hidden} more
-                      </span>
-                    )}
-                    {isExpanded && cellJobs.length > maxVisible && (
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleExpanded(i);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" || e.key === " ") {
+                            setExpandedCells((prev) => {
+                              const next = new Set(prev);
+                              next.add(cell.bays.join(","));
+                              return next;
+                            });
+                          }}
+                          className="w-full text-center text-[10px] text-muted-foreground hover:text-foreground py-0.5 rounded hover:bg-accent/10 transition-colors print:hidden"
+                        >
+                          +{cellJobs.length - 4} more
+                        </button>
+                      )}
+                      {cellJobs.length >= 5 && isExpanded && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
                             e.stopPropagation();
-                            toggleExpanded(i);
-                          }
-                        }}
-                        className="block cursor-pointer rounded px-2 py-0.5 text-[11px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
-                      >
-                        Show less
-                      </span>
-                    )}
-                  </>
-                );
-              })()}
+                            setExpandedCells((prev) => {
+                              const next = new Set(prev);
+                              next.delete(cell.bays.join(","));
+                              return next;
+                            });
+                          }}
+                          className="w-full flex items-center justify-center text-[10px] text-muted-foreground hover:text-foreground py-0.5 rounded hover:bg-accent/10 transition-colors print:hidden"
+                        >
+                          <ChevronUp className="h-3 w-3" />
+                        </button>
+                      )}
+                    </>
+                  );
+                })()
+              )}
             </div>
           </button>
         );
       })}
-      <NotesBlock
-        notes={notes}
-        onChange={handleNotesChange}
-        extraHeight={notesExtra}
-        onExtraHeightChange={setNotesExtra}
-      />
+      <div className="col-span-3" style={{ gridRow: 13 }}>
+        <NotesBlock
+          notes={notes}
+          onSave={handleNotesSave}
+          dateKey={dateKey}
+          extraHeight={notesExtra}
+          onExtraHeightChange={setNotesExtra}
+        />
+      </div>
 
       <Dialog open={activeCell !== null} onOpenChange={(o) => !o && setActiveCell(null)}>
         <DialogContent className="max-w-md [&>button]:hidden">
@@ -403,7 +447,9 @@ export function BayGrid({
                 </DialogTitle>
               </DialogHeader>
               {(() => {
-                const cellJobs = dayJobs.filter((j) => activeCell.bays.includes(j.bay));
+                const cellJobs = dayJobs
+                  .filter((j) => activeCell.bays.includes(j.bay))
+                  .sort((a, b) => (a.priority ?? a.createdAt) - (b.priority ?? b.createdAt));
                 if (cellJobs.length === 0) {
                   return (
                     <p className="py-6 text-center text-sm text-muted-foreground">
@@ -416,11 +462,45 @@ export function BayGrid({
                     {cellJobs.map((j) => (
                       <li
                         key={j.id}
-                        className={`rounded-lg border border-border bg-card p-3 ${
+                        draggable={!!reorderJobs}
+                        onDragStart={() => setDraggingId(j.id)}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          setDragOverId(j.id);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          if (!draggingId || !reorderJobs) return;
+                          if (draggingId === j.id) {
+                            setDraggingId(null);
+                            setDragOverId(null);
+                            return;
+                          }
+                          const draggedIndex = cellJobs.findIndex((c) => c.id === draggingId);
+                          const dropIndex = cellJobs.findIndex((c) => c.id === j.id);
+                          const newOrder = [...cellJobs];
+                          const [removed] = newOrder.splice(draggedIndex, 1);
+                          newOrder.splice(dropIndex, 0, removed);
+                          reorderJobs(newOrder.map((job, i) => ({ id: job.id, priority: i })));
+                          setDraggingId(null);
+                          setDragOverId(null);
+                        }}
+                        onDragEnd={() => {
+                          setDraggingId(null);
+                          setDragOverId(null);
+                        }}
+                        className={`rounded-lg border border-border bg-card p-3 transition-opacity ${
                           j.completed ? "opacity-60" : ""
-                        }`}
+                        } ${draggingId === j.id ? "opacity-40" : ""} ${
+                          dragOverId === j.id && draggingId !== j.id
+                            ? "ring-2 ring-primary ring-offset-2"
+                            : ""
+                        } ${reorderJobs ? "cursor-move" : ""}`}
                       >
                         <div className="flex items-center gap-2">
+                          {reorderJobs && (
+                            <GripVertical className="h-4 w-4 text-muted-foreground" />
+                          )}
                           <Truck className="h-4 w-4 text-primary" />
                           <span
                             className={`font-display text-lg tracking-wider ${
@@ -559,15 +639,25 @@ export function BayGrid({
 
 function NotesBlock({
   notes,
-  onChange,
+  onSave,
+  dateKey,
   extraHeight,
   onExtraHeightChange,
 }: {
   notes: string;
-  onChange: (v: string) => void;
+  onSave: (v: string) => void;
+  dateKey: string;
   extraHeight: number;
   onExtraHeightChange: (h: number) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(notes);
+
+  useEffect(() => {
+    setDraft(notes);
+    setEditing(false);
+  }, [notes, dateKey]);
+
   const startRef = useRef<{ y: number; h: number; scrollY: number } | null>(null);
   const lastClientYRef = useRef(0);
   const rafRef = useRef<number | null>(null);
@@ -627,13 +717,62 @@ function NotesBlock({
         <span className="font-display text-sm tracking-wider text-foreground">
           Notes
         </span>
+        <div className="ml-auto flex items-center gap-1 print:hidden">
+          {editing ? (
+            <>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-xs"
+                onClick={() => {
+                  setDraft(notes);
+                  setEditing(false);
+                }}
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 px-2 text-xs"
+                onClick={() => {
+                  onSave(draft);
+                  setEditing(false);
+                }}
+              >
+                Save
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-7 px-2 text-xs"
+              onClick={() => {
+                setDraft(notes);
+                setEditing(true);
+              }}
+            >
+              <Pencil className="h-3 w-3 mr-1" />
+              Edit
+            </Button>
+          )}
+        </div>
       </div>
-      <Textarea
-        value={notes}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="Add notes for the day…"
-        className="flex-1 resize-none border-0 bg-transparent px-0 text-sm focus-visible:ring-0"
-      />
+      {editing ? (
+        <Textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Add notes for this day…"
+          autoFocus
+          className="flex-1 resize-none border-0 bg-transparent px-0 text-sm focus-visible:ring-0"
+        />
+      ) : (
+        <div className="flex-1 whitespace-pre-wrap px-0 text-sm text-foreground/90">
+          {notes || (
+            <span className="text-muted-foreground/70">No notes for this day.</span>
+          )}
+        </div>
+      )}
       <button
         type="button"
         onPointerDown={onPointerDown}
@@ -641,10 +780,11 @@ function NotesBlock({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         aria-label="Drag to resize notes"
-        className="mx-auto -mb-1 flex h-4 w-12 cursor-ns-resize items-center justify-center rounded text-muted-foreground/60 hover:text-foreground touch-none select-none"
+        className="mx-auto -mb-1 flex h-4 w-12 cursor-ns-resize items-center justify-center rounded text-muted-foreground/60 hover:text-foreground touch-none select-none print:hidden"
       >
         <ChevronDown className="h-4 w-4" />
       </button>
     </div>
   );
 }
+

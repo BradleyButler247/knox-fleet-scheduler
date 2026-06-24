@@ -11,6 +11,11 @@ import {
   X,
   Pencil,
   Trash2,
+  Copy,
+  StickyNote,
+  Upload,
+  Paperclip,
+  Download,
 } from "lucide-react";
 import {
   AlertDialog,
@@ -40,6 +45,9 @@ import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { toDateKey, type Job, type Shift } from "@/lib/schedule-store";
 import { useTruckStatus } from "@/lib/truck-status-store";
+import { useTruckNotes } from "@/lib/truck-notes-store";
+import { useTruckFiles, fileToTruckFile } from "@/lib/truck-files-store";
+import { useJobNotes } from "@/lib/job-notes-store";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Calendar } from "@/components/ui/calendar";
@@ -487,7 +495,6 @@ function PendingJobForm({
               const out: Omit<PendingJob, "id">[] = [];
               let paintIdx = 0;
               const PAINT_COUNTER_KEY = "paint-booth-alternator-v1";
-              const SAND_COUNTER_KEY = "sanding-bay-rotator-v1";
               let counter = 0;
               try {
                 const raw = localStorage.getItem(PAINT_COUNTER_KEY);
@@ -501,20 +508,7 @@ function PendingJobForm({
               } catch {
                 /* ignore */
               }
-              let sandCounter = 0;
-              try {
-                const raw = localStorage.getItem(SAND_COUNTER_KEY);
-                sandCounter = raw ? parseInt(raw, 10) || 0 : 0;
-              } catch {
-                sandCounter = 0;
-              }
-              const SAND_BAYS = ["Bay 1", "Bay 2", "Bay 3"];
-              const sandBay = SAND_BAYS[sandCounter % 3];
-              try {
-                localStorage.setItem(SAND_COUNTER_KEY, String(sandCounter + 1));
-              } catch {
-                /* ignore */
-              }
+              const sandBay = "Bay 1";
               tasks.forEach((taskName, i) => {
                 const d = i === 0 ? startDate : addBusinessDays(startDate, i);
                 const tDateKey = toDateKey(d);
@@ -1037,6 +1031,182 @@ function ReschedulePopover({
   );
 }
 
+function JobNotesPopover({
+  jobId,
+  notes,
+  onAdd,
+  onUpdate,
+  onDelete,
+}: {
+  jobId: string;
+  notes: { id: string; text: string; createdAt: number }[];
+  onAdd: (text: string) => void;
+  onUpdate: (noteId: string, text: string) => void;
+  onDelete: (noteId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState("");
+  const [adding, setAdding] = useState(false);
+
+  const startAdd = () => {
+    setAdding(true);
+    setEditingId(null);
+    setDraft("");
+  };
+
+  const startEdit = (note: { id: string; text: string }) => {
+    setEditingId(note.id);
+    setAdding(false);
+    setDraft(note.text);
+  };
+
+  const cancel = () => {
+    setEditingId(null);
+    setAdding(false);
+    setDraft("");
+  };
+
+  const save = () => {
+    if (adding) {
+      onAdd(draft);
+    } else if (editingId) {
+      onUpdate(editingId, draft);
+    }
+    setEditingId(null);
+    setAdding(false);
+    setDraft("");
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(o) => {
+        setOpen(o);
+        if (o) {
+          setEditingId(null);
+          setAdding(false);
+          setDraft("");
+        }
+      }}
+    >
+      <PopoverTrigger asChild onClick={(e) => e.stopPropagation()}>
+        <span
+          role="button"
+          tabIndex={0}
+          aria-label="Job notes"
+          className={`cursor-pointer rounded p-1 hover:bg-transparent ${notes.length > 0 ? "text-primary" : "text-muted-foreground hover:text-primary"}`}
+        >
+          <StickyNote className="h-4 w-4" />
+        </span>
+      </PopoverTrigger>
+      <PopoverContent className="w-80" align="end" onClick={(e) => e.stopPropagation()}>
+        <div className="space-y-3">
+          <Label className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
+            Job Notes
+          </Label>
+          {notes.length === 0 && !adding && (
+            <p className="text-sm text-muted-foreground">No notes added.</p>
+          )}
+          <div className="max-h-[260px] overflow-y-auto space-y-2 pr-1">
+            {notes.map((note) => (
+              <div key={note.id} className="rounded-md border border-border/60 bg-background/40 p-2">
+              {editingId === note.id ? (
+                <div className="space-y-2">
+                  <Textarea
+                    value={draft}
+                    onChange={(e) => setDraft(e.target.value)}
+                    className="min-h-[60px] resize-y bg-background/60 text-sm"
+                  />
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="border border-transparent hover:border-primary hover:bg-transparent"
+                      onClick={cancel}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      size="sm"
+                      className="border border-transparent hover:border-primary hover:bg-transparent"
+                      onClick={save}
+                    >
+                      Save
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  <p className="text-sm whitespace-pre-wrap">{note.text}</p>
+                  <div className="flex justify-end gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="border border-transparent hover:border-primary hover:bg-transparent"
+                      onClick={() => startEdit(note)}
+                    >
+                      Edit
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="border border-transparent text-destructive hover:border-destructive hover:bg-transparent"
+                      onClick={() => onDelete(note.id)}
+                    >
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+          </div>
+          {(adding || notes.length === 0) && editingId === null && (
+            <div className="space-y-2">
+              <Textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                placeholder="Add a note…"
+                className="min-h-[60px] resize-y bg-background/60 text-sm"
+              />
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="border border-transparent hover:border-primary hover:bg-transparent"
+                  onClick={cancel}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="border border-transparent hover:border-primary hover:bg-transparent"
+                  onClick={save}
+                >
+                  Save
+                </Button>
+              </div>
+            </div>
+          )}
+          {notes.length > 0 && !adding && editingId === null && (
+            <div className="flex justify-end">
+              <Button
+                size="sm"
+                className="border border-transparent hover:border-primary hover:bg-transparent"
+                onClick={startAdd}
+              >
+                <Plus className="mr-1 h-3.5 w-3.5" />
+                Add Note
+              </Button>
+            </div>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export function TruckSchedule({
   jobs,
   addJob,
@@ -1045,6 +1215,7 @@ export function TruckSchedule({
   onToggleComplete,
   removeJob,
   rescheduleFromJob,
+  duplicateJob,
 }: {
   jobs: Job[];
   addJob: (j: Omit<Job, "id" | "createdAt">) => void;
@@ -1053,6 +1224,7 @@ export function TruckSchedule({
   onToggleComplete?: (id: string) => void;
   removeJob?: (id: string) => void;
   rescheduleFromJob?: (id: string, newDate: string) => void;
+  duplicateJob?: (id: string, newDate: string) => void;
 }) {
   const [query, setQuery] = useState("");
   const [openTruck, setOpenTruck] = useState<string | null>(null);
@@ -1061,8 +1233,45 @@ export function TruckSchedule({
   const [editTruck, setEditTruck] = useState<string | null>(null);
   const [deleteTruck, setDeleteTruck] = useState<string | null>(null);
   const [deleteJob, setDeleteJob] = useState<Job | null>(null);
+  const [duplicateTarget, setDuplicateTarget] = useState<Job | null>(null);
+  const [duplicateDate, setDuplicateDate] = useState<Date | undefined>(undefined);
+  const [editingTruckNote, setEditingTruckNote] = useState<string | null>(null);
+  const [draftTruckNote, setDraftTruckNote] = useState("");
   const { getStatus, setField, renameTruckStatus, removeTruckStatus } = useTruckStatus();
+  const { getNote, setNote, renameTruckNote, removeTruckNote } = useTruckNotes();
+  const {
+    getFiles: getTruckFiles,
+    addFile: addTruckFile,
+    removeFile: removeTruckFile,
+    renameTruckFiles,
+    removeTruckFiles,
+  } = useTruckFiles();
+  const [uploadingTruck, setUploadingTruck] = useState<string | null>(null);
+
+  const handleTruckFileUpload = async (truckId: string, fileList: FileList | null) => {
+    if (!fileList || fileList.length === 0) return;
+    setUploadingTruck(truckId);
+    try {
+      for (const f of Array.from(fileList)) {
+        if (f.size > 4 * 1024 * 1024) {
+          toast.error(`${f.name} is larger than 4MB and was skipped.`);
+          continue;
+        }
+        const tf = await fileToTruckFile(f);
+        addTruckFile(truckId, tf);
+      }
+      toast.success("File(s) uploaded");
+    } catch (e) {
+      console.error(e);
+      toast.error("Failed to upload file");
+    } finally {
+      setUploadingTruck(null);
+    }
+  };
+  const { getNotes: getJobNotes, addNote: addJobNote, updateNote: updateJobNote, deleteNote: deleteJobNote } = useJobNotes();
   const [companyFilter, setCompanyFilter] = useState<string>("__all__");
+
+  const [sortOrder, setSortOrder] = useState<"oldest" | "newest">("oldest");
 
   const grouped = useMemo(() => {
     const map = new Map<string, Job[]>();
@@ -1080,10 +1289,10 @@ export function TruckSchedule({
       .sort((a, b) => {
         const ad = a.jobs[0]?.date ?? "";
         const bd = b.jobs[0]?.date ?? "";
-        if (ad !== bd) return ad.localeCompare(bd);
+        if (ad !== bd) return sortOrder === "oldest" ? ad.localeCompare(bd) : bd.localeCompare(ad);
         return a.truckId.localeCompare(b.truckId);
       });
-  }, [jobs]);
+  }, [jobs, sortOrder]);
 
   const companies = useMemo(() => {
     const set = new Set<string>();
@@ -1147,6 +1356,25 @@ export function TruckSchedule({
             ))}
           </SelectContent>
         </Select>
+        <ToggleGroup
+          type="single"
+          value={sortOrder}
+          onValueChange={(v) => v && setSortOrder(v as "oldest" | "newest")}
+          className="shrink-0"
+        >
+          <ToggleGroupItem
+            value="oldest"
+            className="border border-border data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground text-xs"
+          >
+            Oldest
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="newest"
+            className="border border-border data-[state=on]:border-primary data-[state=on]:bg-primary data-[state=on]:text-primary-foreground text-xs"
+          >
+            Newest
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
       {filtered.length === 0 ? (
@@ -1193,7 +1421,7 @@ export function TruckSchedule({
                           checked={status.completed}
                           onCheckedChange={(v) => setField(truckId, "completed", v === true)}
                         />
-                        Job Completed
+                        Truck Completed
                       </label>
                       <label
                         className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none"
@@ -1260,7 +1488,11 @@ export function TruckSchedule({
                       return (
                         <li
                           key={job.id}
-                          className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border/60 bg-background/40 px-3 py-2 text-sm ${job.completed ? "opacity-60" : ""}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setEditTruck(truckId);
+                          }}
+                          className={`flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border/60 bg-background/40 px-3 py-2 text-sm cursor-pointer hover:border-primary/60 hover:bg-background/70 ${job.completed ? "opacity-60" : ""}`}
                         >
                           {onToggleComplete && (
                             <span onClick={(e) => e.stopPropagation()}>
@@ -1318,6 +1550,35 @@ export function TruckSchedule({
                             <User className="h-3 w-3" />
                             {job.employee}
                           </span>
+                          <JobNotesPopover
+                            jobId={job.id}
+                            notes={getJobNotes(job.id)}
+                            onAdd={(text) => addJobNote(job.id, text)}
+                            onUpdate={(noteId, text) => updateJobNote(job.id, noteId, text)}
+                            onDelete={(noteId) => deleteJobNote(job.id, noteId)}
+                          />
+                          {duplicateJob && (
+                            <span
+                              role="button"
+                              tabIndex={0}
+                              aria-label="Duplicate task"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setDuplicateDate(new Date(`${job.date}T00:00:00`));
+                                setDuplicateTarget(job);
+                              }}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" || e.key === " ") {
+                                  e.stopPropagation();
+                                  setDuplicateDate(new Date(`${job.date}T00:00:00`));
+                                  setDuplicateTarget(job);
+                                }
+                              }}
+                              className="ml-auto cursor-pointer rounded p-1 text-muted-foreground hover:bg-transparent hover:text-primary"
+                            >
+                              <Copy className="h-4 w-4" />
+                            </span>
+                          )}
                           {removeJob && (
                             <span
                               role="button"
@@ -1333,15 +1594,155 @@ export function TruckSchedule({
                                   setDeleteJob(job);
                                 }
                               }}
-                              className="ml-auto cursor-pointer rounded p-1 text-muted-foreground hover:bg-transparent hover:text-destructive"
+                              className={`${duplicateJob ? "" : "ml-auto "}cursor-pointer rounded p-1 text-muted-foreground hover:bg-transparent hover:text-destructive`}
                             >
                               <Trash2 className="h-4 w-4" />
                             </span>
+                          )}
+                          {getJobNotes(job.id).length > 0 && (
+                            <div className="w-full space-y-1 pt-1 text-xs text-muted-foreground">
+                              {getJobNotes(job.id).map((note) => (
+                                <span key={note.id} className="flex items-start gap-1">
+                                  <StickyNote className="mt-0.5 h-3 w-3 shrink-0 text-primary/70" />
+                                  <span className="break-words">{note.text}</span>
+                                </span>
+                              ))}
+                            </div>
                           )}
                         </li>
                       );
                     })}
                   </ul>
+                  <div
+                    className="mt-3 border-t border-border/60 pt-3"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                        Notes
+                      </Label>
+                      {editingTruckNote !== truckId && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-6 gap-1 text-xs"
+                          onClick={() => {
+                            setEditingTruckNote(truckId);
+                            setDraftTruckNote(getNote(truckId));
+                          }}
+                        >
+                          <Pencil className="h-3 w-3" /> Edit
+                        </Button>
+                      )}
+                    </div>
+                    {editingTruckNote === truckId ? (
+                      <div className="mt-2 space-y-2">
+                        <Textarea
+                          value={draftTruckNote}
+                          onChange={(e) => setDraftTruckNote(e.target.value)}
+                          placeholder="Add notes for this truck…"
+                          className="min-h-[80px] resize-y bg-background/60 text-sm"
+                        />
+                        <div className="flex justify-end gap-2">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setEditingTruckNote(null)}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              setNote(truckId, draftTruckNote);
+                              setEditingTruckNote(null);
+                            }}
+                          >
+                            Save
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="mt-1 min-h-[40px] rounded-md bg-background/40 px-3 py-2 text-sm text-foreground">
+                        {getNote(truckId) || (
+                          <span className="text-muted-foreground">No notes added.</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  <div
+                    className="mt-3 border-t border-border/60 pt-3"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="flex items-center justify-between">
+                      <Label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
+                        Files
+                      </Label>
+                      <Button
+                        asChild
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 gap-1 text-xs border border-transparent hover:bg-transparent hover:border-primary"
+                        disabled={uploadingTruck === truckId}
+                      >
+                        <label className="cursor-pointer">
+                          <Upload className="h-3 w-3" />
+                          {uploadingTruck === truckId ? "Uploading…" : "Upload"}
+                          <input
+                            type="file"
+                            multiple
+                            className="hidden"
+                            onChange={(e) => {
+                              handleTruckFileUpload(truckId, e.target.files);
+                              e.target.value = "";
+                            }}
+                          />
+                        </label>
+                      </Button>
+                    </div>
+                    {getTruckFiles(truckId).length === 0 ? (
+                      <div className="mt-1 min-h-[40px] rounded-md bg-background/40 px-3 py-2 text-sm text-muted-foreground">
+                        No files uploaded.
+                      </div>
+                    ) : (
+                      <ul className="mt-2 max-h-[160px] space-y-1 overflow-y-auto pr-1">
+                        {getTruckFiles(truckId).map((f) => (
+                          <li
+                            key={f.id}
+                            className="flex items-center gap-2 rounded-md bg-background/40 px-2 py-1.5 text-xs"
+                          >
+                            <Paperclip className="h-3 w-3 shrink-0 text-primary/70" />
+                            <span className="flex-1 truncate" title={f.name}>
+                              {f.name}
+                            </span>
+                            <span className="shrink-0 text-[10px] text-muted-foreground">
+                              {(f.size / 1024).toFixed(f.size > 1024 * 100 ? 0 : 1)} KB
+                            </span>
+                            <a
+                              href={f.dataUrl}
+                              download={f.name}
+                              onClick={(e) => e.stopPropagation()}
+                              className="rounded p-1 text-muted-foreground border border-transparent hover:bg-transparent hover:border-primary"
+                              aria-label={`Download ${f.name}`}
+                            >
+                              <Download className="h-3 w-3" />
+                            </a>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                removeTruckFile(truckId, f.id);
+                              }}
+                              className="rounded p-1 text-muted-foreground border border-transparent hover:bg-transparent hover:border-destructive hover:text-destructive"
+                              aria-label={`Delete ${f.name}`}
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
                 </button>
               </li>
             );
@@ -1350,7 +1751,7 @@ export function TruckSchedule({
       )}
 
       <Dialog open={openTruck !== null} onOpenChange={(o) => !o && setOpenTruck(null)}>
-        <DialogContent className="max-w-5xl">
+        <DialogContent className="max-w-[1400px]">
           {openTruck && (
             <>
               <DialogHeader>
@@ -1436,7 +1837,7 @@ export function TruckSchedule({
       </Dialog>
 
       <Dialog open={editTruck !== null} onOpenChange={(o) => !o && setEditTruck(null)}>
-        <DialogContent className="flex max-h-[95vh] w-[calc(100%-2rem)] max-w-5xl flex-col">
+        <DialogContent className="flex max-h-[95vh] w-[calc(100%-2rem)] max-w-[1400px] flex-col">
           {editTruck && (() => {
             const truckJobs = jobs.filter((j) => j.truckId === editTruck);
             const initialCompany =
@@ -1478,6 +1879,8 @@ export function TruckSchedule({
                     if (nextTruckId !== editTruck) {
                       renameTruck?.(editTruck, nextTruckId);
                       renameTruckStatus(editTruck, nextTruckId);
+                      renameTruckNote(editTruck, nextTruckId);
+                      renameTruckFiles(editTruck, nextTruckId);
                     }
 
                     // Removals
@@ -1564,6 +1967,8 @@ export function TruckSchedule({
                 const ids = jobs.filter((j) => j.truckId === deleteTruck).map((j) => j.id);
                 for (const id of ids) removeJob(id);
                 removeTruckStatus(deleteTruck);
+                removeTruckNote(deleteTruck);
+                removeTruckFiles(deleteTruck);
                 toast.success(`Deleted ${deleteTruck}`);
                 setDeleteTruck(null);
               }}
@@ -1597,6 +2002,66 @@ export function TruckSchedule({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog
+        open={duplicateTarget !== null}
+        onOpenChange={(o) => {
+          if (!o) {
+            setDuplicateTarget(null);
+            setDuplicateDate(undefined);
+          }
+        }}
+      >
+        <DialogContent className="max-w-md">
+          {duplicateTarget && (
+            <>
+              <DialogHeader>
+                <DialogTitle className="font-display text-2xl tracking-wider">
+                  Duplicate task
+                </DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  Pick a new start date for the duplicated <span className="font-medium text-foreground">{duplicateTarget.work}</span> task on{" "}
+                  <span className="font-medium text-foreground">{duplicateTarget.truckId}</span>. Any
+                  tasks on this truck on or after that date will be pushed forward by one business day.
+                </p>
+                <div className="flex justify-center">
+                  <Calendar
+                    mode="single"
+                    selected={duplicateDate}
+                    onSelect={setDuplicateDate}
+                    initialFocus
+                    className={cn("p-3 pointer-events-auto")}
+                  />
+                </div>
+                <div className="flex justify-end gap-2 border-t border-border pt-3">
+                  <Button
+                    variant="ghost"
+                    onClick={() => {
+                      setDuplicateTarget(null);
+                      setDuplicateDate(undefined);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      if (!duplicateTarget || !duplicateDate || !duplicateJob) return;
+                      duplicateJob(duplicateTarget.id, toDateKey(duplicateDate));
+                      toast.success(`Duplicated ${duplicateTarget.work} task`);
+                      setDuplicateTarget(null);
+                      setDuplicateDate(undefined);
+                    }}
+                  >
+                    Duplicate
+                  </Button>
+                </div>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

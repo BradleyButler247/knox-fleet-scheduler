@@ -165,3 +165,83 @@
   background: var(--color-primary);
   box-shadow: 0 0 8px var(--color-primary);
 }
+
+@media print {
+  @page {
+    size: landscape;
+    margin: 0.5in;
+  }
+
+  :root,
+  .dark {
+    --background: oklch(0.98 0.005 100);
+    --foreground: oklch(0.2 0.012 250);
+    --card: oklch(1 0 0);
+    --card-foreground: oklch(0.2 0.012 250);
+    --popover: oklch(1 0 0);
+    --popover-foreground: oklch(0.2 0.012 250);
+    --primary: oklch(0.7 0.18 65);
+    --primary-foreground: oklch(0.18 0.012 250);
+    --secondary: oklch(0.94 0.008 250);
+    --secondary-foreground: oklch(0.22 0.012 250);
+    --muted: oklch(0.94 0.008 250);
+    --muted-foreground: oklch(0.45 0.012 250);
+    --accent: oklch(0.55 0.16 200);
+    --accent-foreground: oklch(0.98 0.005 100);
+    --destructive: oklch(0.6 0.22 25);
+    --destructive-foreground: oklch(0.98 0.005 100);
+    --border: oklch(0.88 0.008 250);
+    --input: oklch(0.92 0.008 250);
+    --ring: oklch(0.7 0.18 65);
+    --chart-1: oklch(0.7 0.18 65);
+    --chart-2: oklch(0.55 0.16 200);
+    --chart-3: oklch(0.65 0.15 145);
+    --chart-4: oklch(0.6 0.2 350);
+    --chart-5: oklch(0.7 0.16 30);
+    --sidebar: oklch(0.96 0.006 250);
+    --sidebar-foreground: oklch(0.2 0.012 250);
+    --sidebar-primary: oklch(0.7 0.18 65);
+    --sidebar-primary-foreground: oklch(0.18 0.012 250);
+    --sidebar-accent: oklch(0.94 0.008 250);
+    --sidebar-accent-foreground: oklch(0.22 0.012 250);
+    --sidebar-border: oklch(0.88 0.008 250);
+    --sidebar-ring: oklch(0.7 0.18 65);
+  }
+
+  body {
+    background: none !important;
+    background-image: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  header,
+  nav,
+  [role="tablist"],
+  .print\:hidden,
+  .print:hidden {
+    display: none !important;
+  }
+
+  main {
+    padding: 0 !important;
+    max-width: none !important;
+  }
+
+  .grid {
+    break-inside: auto;
+  }
+
+  .grid > * {
+    break-inside: avoid;
+  }
+
+  [class*="border"] {
+    border-color: #000 !important;
+  }
+
+  [class*="bg-card"],
+  [class*="bg-background"] {
+    background: #fff !important;
+  }
+}

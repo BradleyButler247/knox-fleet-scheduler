@@ -44,7 +44,7 @@ export const Route = createFileRoute("/")({
 type Mode = "schedule" | "form";
 
 function Index() {
-  const { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck, rescheduleFromJob } = useJobs();
+  const { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck, rescheduleFromJob, duplicateJob, reorderJobs } = useJobs();
   const today = new Date();
   const [month, setMonth] = useState<Date>(
     new Date(today.getFullYear(), today.getMonth(), 1),
@@ -286,7 +286,7 @@ function Index() {
           <TabsContent value="bay" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <BayGrid date={today} jobs={jobs} showCompany addJob={addJob} removeJob={removeJob} updateJob={updateJob} />
+                <BayGrid date={today} jobs={jobs} showCompany addJob={addJob} removeJob={removeJob} updateJob={updateJob} reorderJobs={reorderJobs} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -295,7 +295,7 @@ function Index() {
           <TabsContent value="truck" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <TruckSchedule jobs={jobs} addJob={addJob} updateJob={updateJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} />
+                <TruckSchedule jobs={jobs} addJob={addJob} updateJob={updateJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} duplicateJob={duplicateJob} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -322,7 +322,7 @@ function Index() {
           <TabsContent value="bay" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <BayGrid date={today} jobs={jobs} addJob={addJob} removeJob={removeJob} updateJob={updateJob} />
+                <BayGrid date={today} jobs={jobs} addJob={addJob} removeJob={removeJob} updateJob={updateJob} reorderJobs={reorderJobs} />
               </CardContent>
             </Card>
           </TabsContent>
@@ -370,7 +370,7 @@ function Index() {
           <TabsContent value="truck" className="mt-4">
             <Card>
               <CardContent className="pt-6">
-                <TruckSchedule jobs={jobs} addJob={addJob} updateJob={updateJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} />
+                <TruckSchedule jobs={jobs} addJob={addJob} updateJob={updateJob} renameTruck={renameTruck} onToggleComplete={toggleComplete} removeJob={removeJob} rescheduleFromJob={rescheduleFromJob} duplicateJob={duplicateJob} />
               </CardContent>
             </Card>
           </TabsContent>

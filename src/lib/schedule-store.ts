@@ -14,6 +14,7 @@ export type Job = {
   completed?: boolean;
   company?: string;
   color?: string;
+  priority?: number;
 };
 
 const KEY = "paint-shop-schedule-v1";
@@ -170,5 +171,44 @@ export function useJobs() {
     });
   };
 
-  return { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck, rescheduleFromJob };
+  const duplicateJob = (id: string, newDate: string) => {
+    persist((prev) => {
+      const target = prev.find((j) => j.id === id);
+      if (!target) return prev;
+      const bumped = bumpWeekendToMonday(new Date(`${newDate}T00:00:00`));
+      const newDateKey = toDateKey(bumped);
+      const targetDate = new Date(`${target.date}T00:00:00`);
+      // Shift jobs originally scheduled after the duplicated job by the same
+      // business-day delta so their relative order is preserved.
+      const delta = businessDaysBetween(targetDate, bumped);
+      const shifted = prev.map((j) => {
+        if (j.truckId !== target.truckId) return j;
+        if (delta > 0 && j.date > target.date) {
+          const sd = addBusinessDays(new Date(`${j.date}T00:00:00`), delta);
+          return { ...j, date: toDateKey(sd) };
+        }
+        return j;
+      });
+      const dup: Job = {
+        ...target,
+        id: crypto.randomUUID(),
+        createdAt: Date.now(),
+        date: newDateKey,
+        completed: false,
+      };
+      return [...shifted, dup];
+    });
+  };
+
+  const reorderJobs = (updates: { id: string; priority: number }[]) => {
+    persist((prev) => {
+      const map = new Map(updates.map((u) => [u.id, u.priority]));
+      return prev.map((j) => {
+        const p = map.get(j.id);
+        return p !== undefined ? { ...j, priority: p } : j;
+      });
+    });
+  };
+
+  return { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck, rescheduleFromJob, duplicateJob, reorderJobs };
 }

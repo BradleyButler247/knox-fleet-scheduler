@@ -155,7 +155,6 @@ export function ScheduleForm({
       const scheduled: { date: string; bay: string; shift: Shift }[] = [];
       let paintIdx = 0;
       const PAINT_COUNTER_KEY = "paint-booth-alternator-v1";
-      const SAND_COUNTER_KEY = "sanding-bay-rotator-v1";
       let counter = 0;
       try {
         const raw = localStorage.getItem(PAINT_COUNTER_KEY);
@@ -169,20 +168,7 @@ export function ScheduleForm({
       } catch {
         /* ignore */
       }
-      let sandCounter = 0;
-      try {
-        const raw = localStorage.getItem(SAND_COUNTER_KEY);
-        sandCounter = raw ? parseInt(raw, 10) || 0 : 0;
-      } catch {
-        sandCounter = 0;
-      }
-      const SAND_BAYS = ["Bay 1", "Bay 2", "Bay 3"];
-      const sandBay = SAND_BAYS[sandCounter % 3];
-      try {
-        localStorage.setItem(SAND_COUNTER_KEY, String(sandCounter + 1));
-      } catch {
-        /* ignore */
-      }
+      const sandBay = "Bay 1";
       tasks.forEach((taskName, i) => {
         const d = i === 0 ? startDate : addBusinessDays(startDate, i);
         const tDateKey = toDateKey(d);
