@@ -3,6 +3,8 @@ import { ChevronDown, ChevronUp, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { toDateKey, type Job } from "@/lib/schedule-store";
+import { getHoliday } from "@/lib/holidays";
+
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
@@ -250,18 +252,22 @@ function DayCell({
   const hidden = dayJobs.length - visible.length;
 
   const isWeekend = date.getDay() === 0 || date.getDay() === 6;
+  const holiday = getHoliday(date);
+  const isNonBiz = isWeekend || !!holiday;
   return (
     <button
       onClick={() => onSelect(date)}
+      title={holiday?.name}
       className={cn(
         "group @container/day relative flex flex-col items-stretch overflow-hidden rounded-md border border-border/50 p-1.5 text-left transition-all",
-        isWeekend ? "bg-muted/60 dark:bg-white/10" : "bg-card/40",
+        isNonBiz ? "bg-muted/60 dark:bg-white/10" : "bg-card/40",
         !expanded && "aspect-square",
-        isWeekend ? "hover:border-primary/60 hover:bg-muted dark:hover:bg-white/15" : "hover:border-primary/60 hover:bg-card",
+        isNonBiz ? "hover:border-primary/60 hover:bg-muted dark:hover:bg-white/15" : "hover:border-primary/60 hover:bg-card",
         !inMonth && "opacity-35",
         isSelected && "border-primary bg-primary/10 ring-1 ring-primary",
       )}
     >
+
       <div className="flex items-center justify-between">
         <span
           className={cn(
@@ -286,6 +292,16 @@ function DayCell({
           );
         })()}
       </div>
+      {holiday && (
+        <span
+          className="mt-0.5 hidden truncate text-[9px] font-semibold uppercase tracking-wide text-accent @[4rem]/day:block"
+          title={holiday.name}
+        >
+          {holiday.short}
+        </span>
+      )}
+
+
 
       {!compact && dayJobs.length > 0 && (
         <>

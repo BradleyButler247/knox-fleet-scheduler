@@ -15,7 +15,13 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toDateKey, type Job, type Shift } from "@/lib/schedule-store";
+import { isNonBusinessDay } from "@/lib/holidays";
+import { useJobHours } from "@/lib/job-hours-store";
+import { Clock, Plus, Trash2 } from "lucide-react";
+
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+
 
 const BAYS = [
   "Sandblast Area",
@@ -67,11 +73,11 @@ export function addBusinessDays(date: Date, days: number): Date {
   let added = 0;
   while (added < days) {
     d.setDate(d.getDate() + 1);
-    const day = d.getDay();
-    if (day !== 0 && day !== 6) added++;
+    if (!isNonBusinessDay(d)) added++;
   }
   return d;
 }
+
 
 function parseWork(work: string): { type: string; other: string } {
   if (!work) return { type: "", other: "" };
@@ -139,15 +145,22 @@ export function ScheduleForm({
   const resolvedWork = workType === "Other" ? workOther.trim() : workType;
   const bayRequired = workType !== "Other";
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!truckId.trim() || !resolvedWork) {
       toast.error("Fill in truck ID and work to be done");
       return;
     }
     const finalBay = bay.trim() || "Unassigned";
-    const dateKey = isEdit ? dateKeyState : toDateKey(selectedDate);
+    let dateKey = isEdit ? dateKeyState : toDateKey(selectedDate);
+    // Never schedule on a non-business day (weekend or holiday) — bump forward.
+    {
+      const d = new Date(`${dateKey}T00:00:00`);
+      while (isNonBusinessDay(d)) d.setDate(d.getDate() + 1);
+      dateKey = toDateKey(d);
+    }
     const normalizedTruck = truckId.trim().toUpperCase();
+
 
     if (isMixer && !isEdit) {
       const tasks = MIXER_PRESETS[workType];
@@ -155,20 +168,17 @@ export function ScheduleForm({
       const scheduled: { date: string; bay: string; shift: Shift }[] = [];
       let paintIdx = 0;
       const PAINT_COUNTER_KEY = "paint-booth-alternator-v1";
-      let counter = 0;
-      try {
-        const raw = localStorage.getItem(PAINT_COUNTER_KEY);
-        counter = raw ? parseInt(raw, 10) || 0 : 0;
-      } catch {
-        counter = 0;
-      }
-      const paintBay = counter % 2 === 0 ? "Paint Booth 1" : "Paint Booth 2";
-      try {
-        localStorage.setItem(PAINT_COUNTER_KEY, String(counter + 1));
-      } catch {
-        /* ignore */
-      }
+      // Shared counter so alternation works across all users.
+      const { data: bumpValue, error: bumpError } = await supabase.rpc(
+        "bump_counter",
+        { _key: PAINT_COUNTER_KEY },
+      );
+      if (bumpError) console.error("[paint counter] bump failed", bumpError);
+      const counter = Number(bumpValue ?? 0);
+      // bump_counter returns the NEW value; the "current" booth uses value-1.
+      const paintBay = (counter - 1) % 2 === 0 ? "Paint Booth 1" : "Paint Booth 2";
       const sandBay = "Bay 1";
+
       tasks.forEach((taskName, i) => {
         const d = i === 0 ? startDate : addBusinessDays(startDate, i);
         const tDateKey = toDateKey(d);
@@ -420,6 +430,7 @@ export function ScheduleForm({
         </div>
       )}
 
+
       <Button type="submit" variant="default" className="w-full text-base font-normal tracking-wider">
         {isEdit
           ? "Save changes"
@@ -531,5 +542,160 @@ export function ScheduleForm({
         </AlertDialogContent>
       </AlertDialog>
     </form>
+  );
+}
+
+export function HoursSection({
+  jobId,
+  defaultPerson,
+  defaultDate,
+}: {
+  jobId: string;
+  defaultPerson: string;
+  defaultDate: string;
+}) {
+  const { getHours, addHours, deleteHours } = useJobHours();
+  const entries = getHours(jobId);
+
+  const [adding, setAdding] = useState(false);
+  const [person, setPerson] = useState(defaultPerson);
+  const [date, setDate] = useState(defaultDate);
+  const [start, setStart] = useState("");
+  const [stop, setStop] = useState("");
+
+  const openAdd = () => {
+    setPerson(defaultPerson);
+    setDate(defaultDate);
+    setStart("");
+    setStop("");
+    setAdding(true);
+  };
+
+  const save = async () => {
+    if (!person.trim() || !date) {
+      toast.error("Enter a name and date");
+      return;
+    }
+    await addHours(jobId, {
+      person: person.trim(),
+      date,
+      startTime: start || null,
+      stopTime: stop || null,
+    });
+    setAdding(false);
+  };
+
+  const formatTime = (t: string | null) => {
+    if (!t) return "—";
+    const [h, m] = t.split(":");
+    const hour = Number(h);
+    const suffix = hour >= 12 ? "PM" : "AM";
+    const hh = ((hour + 11) % 12) + 1;
+    return `${hh}:${m} ${suffix}`;
+  };
+
+  return (
+    <div className="space-y-2 rounded-lg border border-border bg-card/40 p-3">
+      <div className="flex items-center justify-between">
+        <Label className="flex items-center gap-1.5 text-sm">
+          <Clock className="h-4 w-4" /> Hours
+        </Label>
+        {!adding && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-7 gap-1 px-2 text-xs"
+            onClick={openAdd}
+          >
+            <Plus className="h-3.5 w-3.5" /> Add hours
+          </Button>
+        )}
+      </div>
+
+      {entries.length > 0 && (
+        <ul className="space-y-1.5">
+          {entries.map((h) => (
+            <li
+              key={h.id}
+              className="flex items-center gap-2 rounded border border-border/60 bg-background/60 px-2 py-1.5 text-xs"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-medium text-foreground">{h.person}</div>
+                <div className="text-muted-foreground">
+                  {new Date(`${h.date}T00:00:00`).toLocaleDateString()} · {formatTime(h.startTime)} – {formatTime(h.stopTime)}
+                </div>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                onClick={() => deleteHours(jobId, h.id)}
+                aria-label="Delete hours"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      {adding && (
+        <div className="space-y-2 rounded border border-border/60 bg-background/60 p-2">
+          <div className="space-y-1">
+            <Label htmlFor="hours-person" className="text-xs">Name</Label>
+            <Input
+              id="hours-person"
+              value={person}
+              onChange={(e) => setPerson(e.target.value)}
+              placeholder="Person"
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="hours-date" className="text-xs">Date</Label>
+            <Input
+              id="hours-date"
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <Label htmlFor="hours-start" className="text-xs">Start</Label>
+              <Input
+                id="hours-start"
+                type="time"
+                value={start}
+                onChange={(e) => setStart(e.target.value)}
+              />
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="hours-stop" className="text-xs">Stop</Label>
+              <Input
+                id="hours-stop"
+                type="time"
+                value={stop}
+                onChange={(e) => setStop(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="flex justify-end gap-2 pt-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setAdding(false)}
+            >
+              Cancel
+            </Button>
+            <Button type="button" size="sm" onClick={save}>
+              Save
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }

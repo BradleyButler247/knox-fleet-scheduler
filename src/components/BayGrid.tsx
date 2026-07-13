@@ -1,4 +1,5 @@
-import { MapPin, Truck, StickyNote, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, User, Calendar as CalendarIcon, Plus, Trash2, X, Pencil, GripVertical, Printer } from "lucide-react";
+import { MapPin, Truck, StickyNote, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, User, Calendar as CalendarIcon, Plus, Trash2, X, Pencil, GripVertical, Printer, Clock } from "lucide-react";
+import { JobHoursDialog } from "@/components/JobHoursDialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -24,6 +25,8 @@ import {
 import { ScheduleForm } from "@/components/ScheduleForm";
 import { useEffect, useRef, useState } from "react";
 import { toDateKey, type Job } from "@/lib/schedule-store";
+import { useBayNotes } from "@/lib/bay-notes-store";
+
 
 type Cell = {
   bays: string[];
@@ -47,18 +50,8 @@ const CELLS: Cell[] = [
   { bays: ["Bay 2"], col: 3, row: 10, rowSpan: 3 },
 ];
 
-const NOTES_KEY = "paint-shop-bay-notes-v2";
+const DAY_NOTE_BAY = "__day__";
 
-function readNotesMap(): Record<string, string> {
-  try {
-    const raw = localStorage.getItem(NOTES_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
-}
 
 function bayLabel(b: string) {
   return /^\d+$/.test(b) ? `Bay ${b}` : b;
@@ -106,7 +99,7 @@ export function BayGrid({
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
   const dayJobs = jobs.filter((j) => j.date === toDateKey(selectedDate));
-  const [notes, setNotes] = useState("");
+  const { getNote: getBayNote, setNote: setBayNote } = useBayNotes();
   const [notesExtra, setNotesExtra] = useState(0);
   const [activeCell, setActiveCell] = useState<Cell | null>(null);
   const [addForCell, setAddForCell] = useState<Cell | null>(null);
@@ -119,22 +112,13 @@ export function BayGrid({
   useEffect(() => setMounted(true), []);
 
   const dateKey = toDateKey(selectedDate);
-
-  useEffect(() => {
-    setNotes(readNotesMap()[dateKey] ?? "");
-  }, [dateKey]);
+  const notes = getBayNote(dateKey, DAY_NOTE_BAY);
 
   const handleNotesSave = (v: string) => {
-    setNotes(v);
-    try {
-      const map = readNotesMap();
-      if (v) map[dateKey] = v;
-      else delete map[dateKey];
-      localStorage.setItem(NOTES_KEY, JSON.stringify(map));
-    } catch {
-      /* ignore */
-    }
+    setBayNote(dateKey, DAY_NOTE_BAY, v);
   };
+
+
 
 
   return (
@@ -317,16 +301,16 @@ export function BayGrid({
                             shouldTruncate && idx >= 4 ? "hidden print:flex" : ""
                           )}
                         >
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <Truck className="h-3 w-3 text-primary shrink-0" />
-                            <span className={cn("shrink-0 truncate font-medium", j.completed ? "line-through" : "")}>
+                            <span className={cn("shrink-0 font-medium break-words", j.completed ? "line-through" : "")}>
                               {j.truckId}
                               {showCompany && j.company ? ` - ${j.company}` : ""}
                             </span>
                             <Badge
                               variant="outline"
                               className={cn(
-                                "min-w-0 flex-1 justify-start truncate text-[10px] px-1.5 py-0",
+                                "min-w-0 flex-1 justify-start text-[10px] px-1.5 py-0 whitespace-normal break-words h-auto",
                                 workColorClass(j.work),
                                 j.completed ? "line-through opacity-70" : ""
                               )}
@@ -335,9 +319,9 @@ export function BayGrid({
                               {j.color ? ` — ${j.color}` : ""}
                             </Badge>
                             {j.employee ? (
-                              <span className={cn("shrink-0 flex items-center gap-1 text-[10px] text-muted-foreground", j.completed ? "line-through opacity-70" : "")}>
+                              <span className={cn("flex items-center gap-1 text-[10px] text-muted-foreground min-w-0", j.completed ? "line-through opacity-70" : "")}>
                                 <User className="h-2.5 w-2.5 shrink-0" />
-                                <span className="truncate">{j.employee}</span>
+                                <span className="break-words whitespace-normal">{j.employee}</span>
                               </span>
                             ) : null}
                             {removeJob && (
@@ -528,6 +512,23 @@ export function BayGrid({
                               <Pencil className="h-4 w-4" />
                             </Button>
                           )}
+                          <JobHoursDialog
+                            jobId={j.id}
+                            defaultPerson={j.employee}
+                            defaultDate={j.date}
+                            truckId={j.truckId}
+                            trigger={
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon"
+                                className="h-6 w-6 text-muted-foreground hover:bg-transparent hover:text-foreground"
+                                aria-label="Add hours"
+                              >
+                                <Clock className="h-4 w-4" />
+                              </Button>
+                            }
+                          />
                           {removeJob && (
                             <Button
                               type="button"

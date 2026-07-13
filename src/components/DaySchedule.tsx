@@ -1,4 +1,5 @@
-import { Truck, MapPin, User, X, ClipboardList, Pencil, Check, Trash2 } from "lucide-react";
+import { Truck, MapPin, User, X, ClipboardList, Pencil, Check, Trash2, Clock } from "lucide-react";
+import { JobHoursDialog } from "@/components/JobHoursDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -123,6 +124,22 @@ export function DaySchedule({
                       <Pencil className="h-4 w-4" />
                     </Button>
                   )}
+                  <JobHoursDialog
+                    jobId={job.id}
+                    defaultPerson={job.employee}
+                    defaultDate={job.date}
+                    truckId={job.truckId}
+                    trigger={
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        aria-label="Add hours"
+                        className="text-muted-foreground hover:bg-transparent hover:text-foreground"
+                      >
+                        <Clock className="h-4 w-4" />
+                      </Button>
+                    }
+                  />
                   <Button
                     variant="ghost"
                     size="icon"

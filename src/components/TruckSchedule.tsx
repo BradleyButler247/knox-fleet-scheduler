@@ -16,7 +16,9 @@ import {
   Upload,
   Paperclip,
   Download,
+  Clock,
 } from "lucide-react";
+import { HoursSection } from "@/components/ScheduleForm";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -44,6 +46,10 @@ import { ScheduleForm, MIXER_PRESETS, pickBayForTask, addBusinessDays } from "@/
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { toDateKey, type Job, type Shift } from "@/lib/schedule-store";
+import { getHoliday } from "@/lib/holidays";
+import { supabase } from "@/integrations/supabase/client";
+
+
 import { useTruckStatus } from "@/lib/truck-status-store";
 import { useTruckNotes } from "@/lib/truck-notes-store";
 import { useTruckFiles, fileToTruckFile } from "@/lib/truck-files-store";
@@ -96,6 +102,7 @@ function WeekGrid({
   onAddJob,
   onRemoveItem,
   onEditItem,
+  hoursTruckId,
   roomy = false,
 }: {
   weekStart: Date;
@@ -103,6 +110,7 @@ function WeekGrid({
   onAddJob: (date: Date) => void;
   onRemoveItem?: (id: string) => void;
   onEditItem?: (id: string) => void;
+  hoursTruckId?: string;
   roomy?: boolean;
 }) {
   const days = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
@@ -130,6 +138,8 @@ function WeekGrid({
           const dayItems = itemsByDay.get(key) ?? [];
           const isToday = todayKey === key;
           const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+          const holiday = getHoliday(d);
+          const isNonBiz = isWeekend || !!holiday;
           return (
             <button
               key={key}
@@ -138,7 +148,7 @@ function WeekGrid({
               className={`group flex ${roomy ? "min-h-0" : "min-h-[140px]"} flex-col rounded-md border p-2 text-left transition-colors hover:border-primary hover:bg-primary/10 ${
                 isToday
                   ? "border-primary/60 bg-primary/5"
-                  : isWeekend
+                  : isNonBiz
                     ? "border-border bg-muted/60 dark:bg-white/10"
                     : "border-border bg-card"
               }`}
@@ -150,7 +160,13 @@ function WeekGrid({
                 </span>
                 <span className="font-display text-base">{d.getDate()}</span>
               </div>
+              {holiday && (
+                <span className="mb-1 truncate text-[10px] font-semibold text-accent" title={holiday.name}>
+                  {holiday.short}
+                </span>
+              )}
               <div className="flex flex-1 flex-col gap-1.5">
+
                 {dayItems.length === 0 ? (
                   <span className="mt-2 text-[11px] text-muted-foreground/60">—</span>
                 ) : (
@@ -162,7 +178,7 @@ function WeekGrid({
                         e.stopPropagation();
                         onEditItem(item.id);
                       }}
-                      className={`relative min-w-0 rounded border border-border/70 bg-background/60 p-1.5 pr-9 text-[11px] leading-snug ${onEditItem ? "cursor-pointer hover:border-primary/60 hover:bg-background" : ""}`}
+                      className={`relative min-w-0 rounded border border-border/70 bg-background/60 p-1.5 ${hoursTruckId ? "pr-14" : "pr-9"} text-[11px] leading-snug ${onEditItem ? "cursor-pointer hover:border-primary/60 hover:bg-background" : ""}`}
                     >
                       <div className="absolute right-0.5 top-0.5 flex gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
                         {onEditItem && (
@@ -184,6 +200,14 @@ function WeekGrid({
                           >
                             <Pencil className="h-3 w-3" />
                           </span>
+                        )}
+                        {hoursTruckId && (
+                          <TileHoursButton
+                            jobId={item.id}
+                            employee={item.employee}
+                            date={key}
+                            truckId={hoursTruckId}
+                          />
                         )}
                         {onRemoveItem && (
                           <span
@@ -223,7 +247,7 @@ function WeekGrid({
                       </p>
                       <div className="mt-1 flex min-w-0 items-start gap-1 text-muted-foreground">
                         <User className="mt-0.5 h-3 w-3 shrink-0" />
-                        <span className="break-words">{item.employee}</span>
+                        <span className="min-w-0 flex-1 [overflow-wrap:anywhere] break-words">{item.employee}</span>
                       </div>
                     </div>
                   ))
@@ -286,6 +310,7 @@ function TruckWeekView({
           onAddJob={onAddJob}
           onEditItem={onEditItem}
           onRemoveItem={onRemoveItem}
+          hoursTruckId={truckId}
         />
       ))}
       <Button
@@ -483,7 +508,8 @@ function PendingJobForm({
         </Button>
         <Button
           type="button"
-          onClick={() => {
+          onClick={async () => {
+
             if (!resolvedWork) {
               toast.error("Select work to be done");
               return;
@@ -495,20 +521,15 @@ function PendingJobForm({
               const out: Omit<PendingJob, "id">[] = [];
               let paintIdx = 0;
               const PAINT_COUNTER_KEY = "paint-booth-alternator-v1";
-              let counter = 0;
-              try {
-                const raw = localStorage.getItem(PAINT_COUNTER_KEY);
-                counter = raw ? parseInt(raw, 10) || 0 : 0;
-              } catch {
-                counter = 0;
-              }
-              const paintBay = counter % 2 === 0 ? "Paint Booth 1" : "Paint Booth 2";
-              try {
-                localStorage.setItem(PAINT_COUNTER_KEY, String(counter + 1));
-              } catch {
-                /* ignore */
-              }
+              const { data: bumpValue, error: bumpError } = await supabase.rpc(
+                "bump_counter",
+                { _key: PAINT_COUNTER_KEY },
+              );
+              if (bumpError) console.error("[paint counter] bump failed", bumpError);
+              const counter = Number(bumpValue ?? 0);
+              const paintBay = (counter - 1) % 2 === 0 ? "Paint Booth 1" : "Paint Booth 2";
               const sandBay = "Bay 1";
+
               tasks.forEach((taskName, i) => {
                 const d = i === 0 ? startDate : addBusinessDays(startDate, i);
                 const tDateKey = toDateKey(d);
@@ -1235,6 +1256,9 @@ export function TruckSchedule({
   const [deleteJob, setDeleteJob] = useState<Job | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<Job | null>(null);
   const [duplicateDate, setDuplicateDate] = useState<Date | undefined>(undefined);
+  const [duplicateTruckSource, setDuplicateTruckSource] = useState<string | null>(null);
+  const [duplicateTruckNewId, setDuplicateTruckNewId] = useState("");
+  const [duplicatingTruck, setDuplicatingTruck] = useState(false);
   const [editingTruckNote, setEditingTruckNote] = useState<string | null>(null);
   const [draftTruckNote, setDraftTruckNote] = useState("");
   const { getStatus, setField, renameTruckStatus, removeTruckStatus } = useTruckStatus();
@@ -1459,6 +1483,26 @@ export function TruckSchedule({
                           <Pencil className="h-4 w-4" />
                         </span>
                       )}
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`Duplicate ${truckId}`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setDuplicateTruckSource(truckId);
+                          setDuplicateTruckNewId("");
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.stopPropagation();
+                            setDuplicateTruckSource(truckId);
+                            setDuplicateTruckNewId("");
+                          }
+                        }}
+                        className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md text-muted-foreground hover:bg-transparent hover:text-foreground"
+                      >
+                        <Copy className="h-4 w-4" />
+                      </span>
                       {removeJob && (
                         <span
                           role="button"
@@ -1556,6 +1600,12 @@ export function TruckSchedule({
                             onAdd={(text) => addJobNote(job.id, text)}
                             onUpdate={(noteId, text) => updateJobNote(job.id, noteId, text)}
                             onDelete={(noteId) => deleteJobNote(job.id, noteId)}
+                          />
+                          <TileHoursButton
+                            jobId={job.id}
+                            employee={job.employee}
+                            date={job.date}
+                            truckId={job.truckId}
                           />
                           {duplicateJob && (
                             <span
@@ -1836,6 +1886,110 @@ export function TruckSchedule({
         </DialogContent>
       </Dialog>
 
+      <Dialog
+        open={duplicateTruckSource !== null}
+        onOpenChange={(o) => {
+          if (!o && !duplicatingTruck) {
+            setDuplicateTruckSource(null);
+            setDuplicateTruckNewId("");
+          }
+        }}
+      >
+        <DialogContent className="w-[calc(100%-2rem)] max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display text-2xl tracking-wider">
+              Duplicate {duplicateTruckSource}
+            </DialogTitle>
+            <p className="text-sm text-muted-foreground">
+              Creates a copy of every scheduled job, note, file, and status on a new truck ID.
+            </p>
+          </DialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="dup-truck-id">New Truck ID</Label>
+            <Input
+              id="dup-truck-id"
+              value={duplicateTruckNewId}
+              onChange={(e) => setDuplicateTruckNewId(e.target.value)}
+              placeholder="e.g. TRK-1234-COPY"
+              autoFocus
+              disabled={duplicatingTruck}
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setDuplicateTruckSource(null);
+                setDuplicateTruckNewId("");
+              }}
+              disabled={duplicatingTruck}
+            >
+              Cancel
+            </Button>
+            <Button
+              disabled={duplicatingTruck}
+              onClick={async () => {
+                const source = duplicateTruckSource;
+                const newId = duplicateTruckNewId.trim();
+                if (!source || !newId) {
+                  toast.error("Enter a new truck ID");
+                  return;
+                }
+                if (grouped.some((g) => g.truckId === newId)) {
+                  toast.error(`Truck ${newId} already exists`);
+                  return;
+                }
+                setDuplicatingTruck(true);
+                try {
+                  const sourceJobs = jobs.filter((j) => j.truckId === source);
+                  for (const j of sourceJobs) {
+                    addJob({
+                      truckId: newId,
+                      work: j.work,
+                      bay: j.bay,
+                      employee: j.employee,
+                      date: j.date,
+                      shift: j.shift,
+                      company: j.company,
+                      color: j.color,
+                      completed: false,
+                    });
+                  }
+                  const note = getNote(source);
+                  if (note) await setNote(newId, note);
+                  const status = getStatus(source);
+                  if (status.completed) await setField(newId, "completed", true);
+                  if (status.invoiced) await setField(newId, "invoiced", true);
+                  const sourceFiles = getTruckFiles(source);
+                  for (const f of sourceFiles) {
+                    await addTruckFile(newId, {
+                      id: crypto.randomUUID(),
+                      name: f.name,
+                      type: f.type,
+                      size: f.size,
+                      dataUrl: f.dataUrl,
+                      uploadedAt: Date.now(),
+                    });
+                  }
+                  toast.success(`Duplicated ${source} → ${newId}`);
+                  setDuplicateTruckSource(null);
+                  setDuplicateTruckNewId("");
+                  setOpenTruck(newId);
+                } catch (err) {
+                  console.error(err);
+                  toast.error("Failed to duplicate truck");
+                } finally {
+                  setDuplicatingTruck(false);
+                }
+              }}
+            >
+              {duplicatingTruck ? "Duplicating…" : "Duplicate"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+
       <Dialog open={editTruck !== null} onOpenChange={(o) => !o && setEditTruck(null)}>
         <DialogContent className="flex max-h-[95vh] w-[calc(100%-2rem)] max-w-[1400px] flex-col">
           {editTruck && (() => {
@@ -2063,5 +2217,58 @@ export function TruckSchedule({
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+function TileHoursButton({
+  jobId,
+  employee,
+  date,
+  truckId,
+}: {
+  jobId: string;
+  employee: string;
+  date: string;
+  truckId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <span
+        role="button"
+        tabIndex={0}
+        onClick={(e) => {
+          e.stopPropagation();
+          setOpen(true);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.stopPropagation();
+            setOpen(true);
+          }
+        }}
+        aria-label="Add hours"
+        className="cursor-pointer rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        <Clock className="h-3 w-3" />
+      </span>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent
+          className="max-w-md"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <DialogHeader>
+            <DialogTitle className="font-display tracking-wider">
+              Hours — {truckId}
+            </DialogTitle>
+          </DialogHeader>
+          <HoursSection
+            jobId={jobId}
+            defaultPerson={employee}
+            defaultDate={date}
+          />
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

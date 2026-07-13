@@ -1,55 +1,74 @@
 import { useEffect, useState } from "react";
-
-const KEY = "paint-shop-truck-notes-v1";
+import { supabase } from "@/integrations/supabase/client";
 
 type NotesMap = Record<string, string>;
 
-function read(): NotesMap {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return {};
-    return JSON.parse(raw) as NotesMap;
-  } catch {
+async function fetchAll(): Promise<NotesMap> {
+  const { data, error } = await supabase.from("truck_notes").select("*");
+  if (error) {
+    console.error("[truck_notes] fetch failed", error);
     return {};
   }
+  const map: NotesMap = {};
+  for (const r of (data ?? []) as { truck_id: string; note: string }[]) {
+    map[r.truck_id] = r.note;
+  }
+  return map;
 }
 
 export function useTruckNotes() {
   const [notes, setNotes] = useState<NotesMap>({});
 
-  useEffect(() => {
-    setNotes(read());
-  }, []);
+  const refresh = () => fetchAll().then(setNotes);
 
-  const persist = (updater: (prev: NotesMap) => NotesMap) => {
-    setNotes((prev) => {
-      const next = updater(prev);
-      localStorage.setItem(KEY, JSON.stringify(next));
-      return next;
-    });
-  };
+  useEffect(() => {
+    refresh();
+    const channel = supabase
+      .channel(`truck-notes-changes-${Math.random().toString(36).slice(2)}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "truck_notes" },
+        () => refresh(),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const getNote = (truckId: string): string => notes[truckId] ?? "";
 
-  const setNote = (truckId: string, value: string) => {
-    persist((prev) => ({ ...prev, [truckId]: value }));
+  const setNote = async (truckId: string, value: string) => {
+    setNotes((prev) => ({ ...prev, [truckId]: value }));
+    const { error } = await supabase
+      .from("truck_notes")
+      .upsert({ truck_id: truckId, note: value, updated_at: new Date().toISOString() } as never);
+    if (error) console.error("[truck_notes] upsert failed", error);
   };
 
-  const renameTruckNote = (oldId: string, newId: string) => {
-    persist((prev) => {
+  const renameTruckNote = async (oldId: string, newId: string) => {
+    setNotes((prev) => {
       if (!prev[oldId]) return prev;
       const { [oldId]: existing, ...rest } = prev;
       return { ...rest, [newId]: existing };
     });
+    const cur = notes[oldId];
+    if (cur === undefined) return;
+    await supabase.from("truck_notes").delete().eq("truck_id", oldId);
+    const { error } = await supabase
+      .from("truck_notes")
+      .upsert({ truck_id: newId, note: cur } as never);
+    if (error) console.error("[truck_notes] rename failed", error);
   };
 
-  const removeTruckNote = (truckId: string) => {
-    persist((prev) => {
+  const removeTruckNote = async (truckId: string) => {
+    setNotes((prev) => {
       if (!prev[truckId]) return prev;
       const { [truckId]: _removed, ...rest } = prev;
       return rest;
     });
+    const { error } = await supabase.from("truck_notes").delete().eq("truck_id", truckId);
+    if (error) console.error("[truck_notes] delete failed", error);
   };
 
   return { notes, getNote, setNote, renameTruckNote, removeTruckNote };

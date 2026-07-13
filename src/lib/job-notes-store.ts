@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-
-const KEY = "paint-shop-job-notes-v2";
-const LEGACY_KEY = "paint-shop-job-notes-v1";
+import { supabase } from "@/integrations/supabase/client";
 
 export type JobNoteItem = {
   id: string;
@@ -11,96 +9,105 @@ export type JobNoteItem = {
 
 type NotesMap = Record<string, JobNoteItem[]>;
 
-function generateId() {
-  return `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
+type Row = {
+  id: string;
+  job_id: string;
+  text: string;
+  created_at_ms: number;
+};
+
+function toMap(rows: Row[]): NotesMap {
+  const map: NotesMap = {};
+  for (const r of rows) {
+    const arr = map[r.job_id] ?? [];
+    arr.push({ id: r.id, text: r.text, createdAt: Number(r.created_at_ms) });
+    map[r.job_id] = arr;
+  }
+  for (const k of Object.keys(map)) {
+    map[k].sort((a, b) => a.createdAt - b.createdAt);
+  }
+  return map;
 }
 
-function migrateLegacy(): NotesMap {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(LEGACY_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const result: NotesMap = {};
-    for (const [jobId, value] of Object.entries(parsed)) {
-      if (typeof value === "string" && value.trim()) {
-        result[jobId] = [{ id: generateId(), text: value, createdAt: Date.now() }];
-      }
-    }
-    return result;
-  } catch {
+async function fetchAll(): Promise<NotesMap> {
+  const { data, error } = await supabase.from("job_notes").select("*");
+  if (error) {
+    console.error("[job_notes] fetch failed", error);
     return {};
   }
-}
-
-function read(): NotesMap {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(KEY);
-    if (!raw) {
-      const migrated = migrateLegacy();
-      if (Object.keys(migrated).length > 0) {
-        localStorage.setItem(KEY, JSON.stringify(migrated));
-      }
-      return migrated;
-    }
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    const result: NotesMap = {};
-    for (const [jobId, value] of Object.entries(parsed)) {
-      if (Array.isArray(value)) {
-        result[jobId] = value as JobNoteItem[];
-      }
-    }
-    return result;
-  } catch {
-    return {};
-  }
+  return toMap((data ?? []) as Row[]);
 }
 
 export function useJobNotes() {
   const [notes, setNotes] = useState<NotesMap>({});
 
-  useEffect(() => {
-    setNotes(read());
-  }, []);
+  const refresh = () => fetchAll().then(setNotes);
 
-  const persist = (updater: (prev: NotesMap) => NotesMap) => {
-    setNotes((prev) => {
-      const next = updater(prev);
-      localStorage.setItem(KEY, JSON.stringify(next));
-      return next;
-    });
-  };
+  useEffect(() => {
+    refresh();
+    const channel = supabase
+      .channel(`job-notes-changes-${Math.random().toString(36).slice(2)}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "job_notes" },
+        () => refresh(),
+      )
+      .subscribe();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
   const getNotes = (jobId: string): JobNoteItem[] => notes[jobId] ?? [];
 
-  const addNote = (jobId: string, text: string) => {
-    const item: JobNoteItem = { id: generateId(), text, createdAt: Date.now() };
-    persist((prev) => {
-      const list = prev[jobId] ? [...prev[jobId]] : [];
-      list.push(item);
-      return { ...prev, [jobId]: list };
-    });
+  const addNote = async (jobId: string, text: string) => {
+    const tempId = crypto.randomUUID();
+    const item: JobNoteItem = { id: tempId, text, createdAt: Date.now() };
+    setNotes((prev) => ({ ...prev, [jobId]: [...(prev[jobId] ?? []), item] }));
+    const { data, error } = await supabase
+      .from("job_notes")
+      .insert({ job_id: jobId, text } as never)
+      .select("*")
+      .single();
+    if (error) {
+      console.error("[job_notes] insert failed", error);
+      setNotes((prev) => ({
+        ...prev,
+        [jobId]: (prev[jobId] ?? []).filter((n) => n.id !== tempId),
+      }));
+      return;
+    }
+    const r = data as Row;
+    setNotes((prev) => ({
+      ...prev,
+      [jobId]: (prev[jobId] ?? []).map((n) =>
+        n.id === tempId ? { id: r.id, text: r.text, createdAt: Number(r.created_at_ms) } : n,
+      ),
+    }));
   };
 
-  const updateNote = (jobId: string, noteId: string, text: string) => {
-    persist((prev) => {
-      const list = prev[jobId] ? [...prev[jobId]] : [];
-      return { ...prev, [jobId]: list.map((n) => (n.id === noteId ? { ...n, text } : n)) };
-    });
+  const updateNote = async (jobId: string, noteId: string, text: string) => {
+    setNotes((prev) => ({
+      ...prev,
+      [jobId]: (prev[jobId] ?? []).map((n) => (n.id === noteId ? { ...n, text } : n)),
+    }));
+    const { error } = await supabase
+      .from("job_notes")
+      .update({ text } as never)
+      .eq("id", noteId);
+    if (error) console.error("[job_notes] update failed", error);
   };
 
-  const deleteNote = (jobId: string, noteId: string) => {
-    persist((prev) => {
-      const list = prev[jobId] ? prev[jobId].filter((n) => n.id !== noteId) : [];
+  const deleteNote = async (jobId: string, noteId: string) => {
+    setNotes((prev) => {
+      const list = (prev[jobId] ?? []).filter((n) => n.id !== noteId);
       const next = { ...prev };
-      if (list.length === 0) {
-        delete next[jobId];
-      } else {
-        next[jobId] = list;
-      }
+      if (list.length === 0) delete next[jobId];
+      else next[jobId] = list;
       return next;
     });
+    const { error } = await supabase.from("job_notes").delete().eq("id", noteId);
+    if (error) console.error("[job_notes] delete failed", error);
   };
 
   return { notes, getNotes, addNote, updateNote, deleteNote };
