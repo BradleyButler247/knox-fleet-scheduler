@@ -20,7 +20,7 @@ import { MonthCalendar } from "@/components/MonthCalendar";
 import { TruckSchedule } from "@/components/TruckSchedule";
 import { BayGrid } from "@/components/BayGrid";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { useJobs, toDateKey } from "@/lib/schedule-store";
+import { useJobs, toDateKey, jobCoversDate } from "@/lib/schedule-store";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -103,7 +103,7 @@ function Index() {
       </header>
 
       {/* Desktop */}
-      <main className="mx-auto hidden w-full px-6 py-6 lg:block">
+      <main className="mx-auto hidden w-full px-6 py-6 lg:block print:block">
         <Tabs defaultValue="bay" className="w-full">
           <TabsList className="grid w-full max-w-lg grid-cols-3">
             <TabsTrigger value="bay" className="gap-2">
@@ -135,7 +135,7 @@ function Index() {
 
               const selectedDate = openDay ?? today;
               const dayJobCount = jobs.filter(
-                (j) => j.date === toDateKey(selectedDate),
+                (j) => jobCoversDate(j, toDateKey(selectedDate)),
               ).length;
               const dayContent = (
                 <Card className="h-full">
@@ -303,7 +303,7 @@ function Index() {
       </main>
 
       {/* Mobile / tablet: tabs */}
-      <main className="mx-auto max-w-2xl px-4 py-6 lg:hidden">
+      <main className="mx-auto max-w-2xl px-4 py-6 lg:hidden print:hidden">
         <Tabs defaultValue="bay" className="w-full">
           <TabsList className="grid w-full grid-cols-2 h-auto sm:grid-cols-4">
             <TabsTrigger value="bay" className="gap-2">
@@ -390,8 +390,8 @@ function Index() {
                 </DialogTitle>
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary" className="font-display text-base px-3 py-1">
-                    {jobs.filter((j) => j.date === toDateKey(openDay)).length}{" "}
-                    {jobs.filter((j) => j.date === toDateKey(openDay)).length === 1 ? "job" : "jobs"}
+                    {jobs.filter((j) => jobCoversDate(j, toDateKey(openDay))).length}{" "}
+                    {jobs.filter((j) => jobCoversDate(j, toDateKey(openDay))).length === 1 ? "job" : "jobs"}
                   </Badge>
                   <Button
                     size="icon"

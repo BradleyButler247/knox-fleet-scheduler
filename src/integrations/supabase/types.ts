@@ -132,6 +132,7 @@ export type Database = {
           created_at_ms: number
           date: string
           employee: string
+          end_date: string | null
           id: string
           priority: number | null
           shift: string
@@ -147,6 +148,7 @@ export type Database = {
           created_at_ms?: number
           date: string
           employee?: string
+          end_date?: string | null
           id?: string
           priority?: number | null
           shift?: string
@@ -162,6 +164,7 @@ export type Database = {
           created_at_ms?: number
           date?: string
           employee?: string
+          end_date?: string | null
           id?: string
           priority?: number | null
           shift?: string

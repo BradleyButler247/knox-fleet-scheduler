@@ -45,7 +45,16 @@ import {
 import { ScheduleForm, MIXER_PRESETS, pickBayForTask, addBusinessDays } from "@/components/ScheduleForm";
 import { toast } from "sonner";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { toDateKey, type Job, type Shift } from "@/lib/schedule-store";
+import {
+  toDateKey,
+  jobDateKeys,
+  bumpToBusinessDay,
+  addBusinessDaysTo,
+  businessDaysBetweenDates,
+  nextBusinessDay,
+  type Job,
+  type Shift,
+} from "@/lib/schedule-store";
 import { getHoliday } from "@/lib/holidays";
 import { supabase } from "@/integrations/supabase/client";
 
@@ -291,9 +300,11 @@ function TruckWeekView({
   const jobsByDay = useMemo(() => {
     const map = new Map<string, Job[]>();
     for (const j of truckJobs) {
-      const arr = map.get(j.date) ?? [];
-      arr.push(j);
-      map.set(j.date, arr);
+      for (const key of jobDateKeys(j)) {
+        const arr = map.get(key) ?? [];
+        arr.push(j);
+        map.set(key, arr);
+      }
     }
     return map;
   }, [truckJobs]);
@@ -325,7 +336,74 @@ function TruckWeekView({
   );
 }
 
-type PendingJob = WeekItem & { date: string };
+type PendingJob = WeekItem & { date: string; endDate?: string };
+
+/**
+ * One task per day per truck: tasks run in sequence and a multi-day task
+ * pushes every following task to the next business day after it ends.
+ */
+function resequencePending(jobs: PendingJob[]): PendingJob[] {
+  const order = jobs
+    .map((j, i) => ({ j, i }))
+    .sort((a, b) => (a.j.date === b.j.date ? a.i - b.i : a.j.date < b.j.date ? -1 : 1));
+
+  const changes = new Map<string, { date: string; endDate?: string }>();
+  let cursor: Date | null = null;
+
+  for (const { j } of order) {
+    const origStart = new Date(`${j.date}T00:00:00`);
+    const origEnd =
+      j.endDate && j.endDate > j.date ? new Date(`${j.endDate}T00:00:00`) : new Date(origStart);
+    const span = Math.max(0, businessDaysBetweenDates(origStart, origEnd));
+
+    let start = bumpToBusinessDay(origStart);
+    if (cursor && start.getTime() < cursor.getTime()) start = new Date(cursor);
+    const end = span > 0 ? addBusinessDaysTo(start, span) : new Date(start);
+
+    const nd = toDateKey(start);
+    const ne = toDateKey(end);
+    changes.set(j.id, { date: nd, endDate: ne !== nd ? ne : undefined });
+    cursor = nextBusinessDay(end);
+  }
+
+  return jobs.map((j) => {
+    const c = changes.get(j.id);
+    return c ? { ...j, date: c.date, endDate: c.endDate } : j;
+  });
+}
+
+function updatePendingJob(
+  jobs: PendingJob[],
+  id: string,
+  patch: Partial<PendingJob>,
+): PendingJob[] {
+  const target = jobs.find((job) => job.id === id);
+  const nextBay = patch.bay;
+
+  const apply = (next: PendingJob[]) => resequencePending(next);
+
+  if (!target || target.work !== "Paint" || !nextBay || nextBay === target.bay) {
+    return apply(jobs.map((job) => (job.id === id ? { ...job, ...patch } : job)));
+  }
+
+  const firstPaint = jobs
+    .map((job, index) => ({ job, index }))
+    .filter(({ job }) => job.work === "Paint")
+    .sort((a, b) => a.job.date.localeCompare(b.job.date) || a.index - b.index)[0];
+
+  if (!firstPaint || firstPaint.job.id !== id) {
+    return apply(jobs.map((job) => (job.id === id ? { ...job, ...patch } : job)));
+  }
+
+  return apply(
+    jobs.map((job) => {
+      if (job.id === id) return { ...job, ...patch };
+      if (job.work === "Paint") return { ...job, bay: nextBay };
+      return job;
+    }),
+  );
+}
+
 
 const BAYS = [
   "Sandblast Area",
@@ -346,6 +424,7 @@ const WORK_OPTIONS = [
   "Sanding",
   "Paint",
   "Assembly",
+  "Touch up",
   "Check-in",
   "Touchups",
   "Other",
@@ -361,8 +440,8 @@ function PendingJobForm({
 }: {
   date: Date;
   existingPending?: PendingJob[];
-  initial?: Partial<Omit<PendingJob, "id" | "date">>;
-  onAdd: (j: Omit<PendingJob, "id" | "date">) => void;
+  initial?: Partial<Omit<PendingJob, "id">>;
+  onAdd: (j: Omit<PendingJob, "id">) => void;
   onAddMany?: (jobs: Omit<PendingJob, "id">[]) => void;
   onCancel: () => void;
 }) {
@@ -378,9 +457,14 @@ function PendingJobForm({
   const [shift, setShift] = useState<Shift>(initial?.shift ?? "ALL_DAY");
   const [color, setColor] = useState(initial?.color ?? "");
   const [mixerColors, setMixerColors] = useState<string[]>(["", "", ""]);
+  const [startDate, setStartDate] = useState(initial?.date ?? toDateKey(date));
+  const [endDate, setEndDate] = useState(
+    initial?.endDate ?? initial?.date ?? toDateKey(date),
+  );
   const isMixer = workType === "Mixer 2 Color" || workType === "Mixer 3 Color";
   const isEditing = !!initial;
   const resolvedWork = workType === "Other" ? workOther.trim() : workType;
+
 
   return (
     <div className="space-y-3">
@@ -391,6 +475,33 @@ function PendingJobForm({
           day: "numeric",
         })}
       </p>
+      {!isMixer && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="pending-start-date">Start date</Label>
+            <Input
+              id="pending-start-date"
+              type="date"
+              value={startDate}
+              onChange={(e) => {
+                const v = e.target.value;
+                setStartDate(v);
+                if (v && endDate < v) setEndDate(v);
+              }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="pending-end-date">End date</Label>
+            <Input
+              id="pending-end-date"
+              type="date"
+              min={startDate}
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+            />
+          </div>
+        </div>
+      )}
       <div className="grid grid-cols-2 gap-3">
         <div className="space-y-1.5">
           <Label>Bay</Label>
@@ -563,6 +674,8 @@ function PendingJobForm({
               bay: bay.trim() || "Unassigned",
               employee: employee.trim(),
               shift,
+              date: startDate,
+              endDate: endDate && endDate > startDate ? endDate : startDate,
               ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
             });
           }}
@@ -612,7 +725,7 @@ function MobileTaskRows({
         };
         return [seed];
       }
-      return prev.map((r) => (r.id === id ? { ...r, ...patch } : r));
+      return updatePendingJob(prev, id, patch);
     });
   };
 
@@ -660,14 +773,31 @@ function MobileTaskRows({
               )}
             </div>
 
-            <div className="space-y-1.5">
-              <Label>Date</Label>
-              <Input
-                type="date"
-                value={row.date}
-                onChange={(e) => updateRow(row.id, { date: e.target.value })}
-              />
+            <div className="grid grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>Start date</Label>
+                <Input
+                  type="date"
+                  value={row.date}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    const patch: Partial<PendingJob> = { date: v };
+                    if (v && (row.endDate ?? v) < v) patch.endDate = v;
+                    updateRow(row.id, patch);
+                  }}
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>End date</Label>
+                <Input
+                  type="date"
+                  min={row.date}
+                  value={row.endDate ?? row.date}
+                  onChange={(e) => updateRow(row.id, { endDate: e.target.value })}
+                />
+              </div>
             </div>
+
 
             <div className="space-y-1.5">
               <Label>Task</Label>
@@ -810,9 +940,11 @@ function TruckScheduleForm({
   const itemsByDay = useMemo(() => {
     const map = new Map<string, WeekItem[]>();
     for (const p of pending) {
-      const arr = map.get(p.date) ?? [];
-      arr.push(p);
-      map.set(p.date, arr);
+      for (const key of jobDateKeys({ date: p.date, endDate: p.endDate } as Job)) {
+        const arr = map.get(key) ?? [];
+        arr.push(p);
+        map.set(key, arr);
+      }
     }
     return map;
   }, [pending]);
@@ -937,7 +1069,6 @@ function TruckScheduleForm({
                     {
                       ...j,
                       id: crypto.randomUUID(),
-                      date: toDateKey(addFor),
                     },
                   ]);
                   setAddFor(null);
@@ -971,15 +1102,13 @@ function TruckScheduleForm({
                   employee: editFor.employee,
                   shift: editFor.shift,
                   color: editFor.color,
+                  date: editFor.date,
+                  endDate: editFor.endDate,
                 }}
                 onCancel={() => setEditFor(null)}
                 onAdd={(j) => {
                   setPending((prev) =>
-                    prev.map((p) =>
-                      p.id === editFor.id
-                        ? { ...p, ...j, date: editFor.date }
-                        : p,
-                    ),
+                    updatePendingJob(prev, editFor.id, { ...j }),
                   );
                   setEditFor(null);
                 }}
@@ -1294,6 +1423,7 @@ export function TruckSchedule({
   };
   const { getNotes: getJobNotes, addNote: addJobNote, updateNote: updateJobNote, deleteNote: deleteJobNote } = useJobNotes();
   const [companyFilter, setCompanyFilter] = useState<string>("__all__");
+  const [invoicedFilter, setInvoicedFilter] = useState<"__all__" | "invoiced" | "not_invoiced">("__all__");
 
   const [sortOrder, setSortOrder] = useState<"oldest" | "newest">("oldest");
 
@@ -1331,6 +1461,11 @@ export function TruckSchedule({
       if (g.company) return false;
     } else if (g.company !== companyFilter) {
       return false;
+    }
+    if (invoicedFilter !== "__all__") {
+      const invoiced = getStatus(g.truckId).invoiced;
+      if (invoicedFilter === "invoiced" && !invoiced) return false;
+      if (invoicedFilter === "not_invoiced" && invoiced) return false;
     }
     const q = query.trim().toLowerCase();
     if (q && !g.truckId.toLowerCase().includes(q)) return false;
@@ -1380,6 +1515,19 @@ export function TruckSchedule({
             ))}
           </SelectContent>
         </Select>
+        <Select
+          value={invoicedFilter}
+          onValueChange={(v) => setInvoicedFilter(v as typeof invoicedFilter)}
+        >
+          <SelectTrigger className="sm:w-48">
+            <SelectValue placeholder="Filter by invoicing" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All trucks</SelectItem>
+            <SelectItem value="invoiced">Invoiced</SelectItem>
+            <SelectItem value="not_invoiced">Not invoiced</SelectItem>
+          </SelectContent>
+        </Select>
         <ToggleGroup
           type="single"
           value={sortOrder}
@@ -1415,9 +1563,17 @@ export function TruckSchedule({
             const grayed = status.completed && status.invoiced;
             return (
               <li key={truckId}>
-                <button
-                  type="button"
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => setOpenTruck(truckId)}
+                  onKeyDown={(e) => {
+                    if (e.target !== e.currentTarget) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setOpenTruck(truckId);
+                    }
+                  }}
                   className={`w-full rounded-lg border p-4 text-left transition-colors hover:border-primary/60 ${
                     grayed
                       ? "border-border/50 bg-muted/40 opacity-70"
@@ -1562,10 +1718,19 @@ export function TruckSchedule({
                               />
                             )}
                             {d.toLocaleDateString(undefined, {
+                              weekday: "short",
                               month: "short",
                               day: "numeric",
                               year: "numeric",
                             })}
+                            {job.endDate && job.endDate > job.date
+                              ? ` – ${new Date(`${job.endDate}T00:00:00`).toLocaleDateString(undefined, {
+                                  weekday: "short",
+                                  month: "short",
+                                  day: "numeric",
+                                  year: "numeric",
+                                })}`
+                              : ""}
                           </span>
                           <Badge
                             variant="outline"
@@ -1666,6 +1831,8 @@ export function TruckSchedule({
                   <div
                     className="mt-3 border-t border-border/60 pt-3"
                     onClick={(e) => e.stopPropagation()}
+                    onKeyDown={(e) => e.stopPropagation()}
+                    onKeyUp={(e) => e.stopPropagation()}
                   >
                     <div className="flex items-center justify-between">
                       <Label className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">
@@ -1793,7 +1960,7 @@ export function TruckSchedule({
                       </ul>
                     )}
                   </div>
-                </button>
+                </div>
               </li>
             );
           })}
@@ -1873,6 +2040,7 @@ export function TruckSchedule({
                   bay: it.bay,
                   employee: it.employee,
                   date: it.date,
+                  endDate: it.endDate,
                   shift: it.shift,
                   company: company || undefined,
                   color: it.color,
@@ -1949,6 +2117,7 @@ export function TruckSchedule({
                       bay: j.bay,
                       employee: j.employee,
                       date: j.date,
+                      endDate: j.endDate,
                       shift: j.shift,
                       company: j.company,
                       color: j.color,
@@ -1999,6 +2168,7 @@ export function TruckSchedule({
             const initialPending: PendingJob[] = truckJobs.map((j) => ({
               id: j.id,
               date: j.date,
+              endDate: j.endDate,
               work: j.work,
               bay: j.bay,
               employee: j.employee,
@@ -2053,6 +2223,7 @@ export function TruckSchedule({
                           orig.bay !== it.bay ||
                           orig.employee !== it.employee ||
                           orig.date !== it.date ||
+                          (orig.endDate ?? orig.date) !== (it.endDate ?? it.date) ||
                           orig.shift !== it.shift ||
                           (orig.color ?? "") !== (it.color ?? "") ||
                           (orig.company ?? "") !== (companyVal ?? "") ||
@@ -2064,6 +2235,7 @@ export function TruckSchedule({
                             bay: it.bay,
                             employee: it.employee,
                             date: it.date,
+                            endDate: it.endDate ?? it.date,
                             shift: it.shift,
                             company: companyVal,
                             color: it.color,
@@ -2077,6 +2249,7 @@ export function TruckSchedule({
                           bay: it.bay,
                           employee: it.employee,
                           date: it.date,
+                          endDate: it.endDate ?? it.date,
                           shift: it.shift,
                           company: companyVal,
                           color: it.color,

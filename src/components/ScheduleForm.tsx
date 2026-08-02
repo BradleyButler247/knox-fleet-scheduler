@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -34,11 +34,11 @@ const BAYS = [
   "Paint Booth 1",
   "Paint Booth 2",
 ];
-const WORK_OPTIONS = ["Mixer 2 Color", "Mixer 3 Color", "Disassembly", "Sandblast", "Sanding", "Paint", "Assembly", "Check-in", "Touchups", "Other"] as const;
+const WORK_OPTIONS = ["Mixer 2 Color", "Mixer 3 Color", "Disassembly", "Sandblast", "Sanding", "Paint", "Assembly", "Touch up", "Check-in", "Touchups", "Other"] as const;
 
 export const MIXER_PRESETS: Record<string, string[]> = {
-  "Mixer 2 Color": ["Disassembly", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Assembly"],
-  "Mixer 3 Color": ["Disassembly", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Paint 3", "Assembly"],
+  "Mixer 2 Color": ["Disassembly", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Assembly", "Touch up"],
+  "Mixer 3 Color": ["Disassembly", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Paint 3", "Assembly", "Touch up"],
 };
 
 export function pickBayForTask(
@@ -61,6 +61,7 @@ export function pickBayForTask(
     return options.reduce((min, b) => (countOnDay(b) < countOnDay(min) ? b : min), options[0]);
   };
 
+  if (task === "Touch up") return "Paint Booth 2";
   if (task === "Disassembly" || task === "Assembly") return "Bay 4";
   if (task === "Sandblast") return "Sandblast Area";
   if (task === "Sanding") return pickFromOptions(["Bay 1", "Bay 2", "Bay 3"]);
@@ -140,8 +141,17 @@ export function ScheduleForm({
   const [dateKeyState, setDateKeyState] = useState(
     initialJob?.date ?? toDateKey(selectedDate),
   );
+  const [endDateState, setEndDateState] = useState(
+    initialJob?.endDate ?? initialJob?.date ?? toDateKey(selectedDate),
+  );
 
   const isMixer = workType === "Mixer 2 Color" || workType === "Mixer 3 Color";
+
+  // New jobs default to starting and finishing on the selected day.
+  useEffect(() => {
+    if (!isEdit) setEndDateState(toDateKey(selectedDate));
+  }, [isEdit, selectedDate]);
+
   const resolvedWork = workType === "Other" ? workOther.trim() : workType;
   const bayRequired = workType !== "Other";
 
@@ -176,8 +186,12 @@ export function ScheduleForm({
       if (bumpError) console.error("[paint counter] bump failed", bumpError);
       const counter = Number(bumpValue ?? 0);
       // bump_counter returns the NEW value; the "current" booth uses value-1.
-      const paintBay = (counter - 1) % 2 === 0 ? "Paint Booth 1" : "Paint Booth 2";
+      const autoPaintBay = (counter - 1) % 2 === 0 ? "Paint Booth 1" : "Paint Booth 2";
+      // Always use the alternating booth when auto-populating a new truck.
+      // Changing the first paint task later cascades to the rest.
+      const paintBay = autoPaintBay;
       const sandBay = "Bay 1";
+
 
       tasks.forEach((taskName, i) => {
         const d = i === 0 ? startDate : addBusinessDays(startDate, i);
@@ -188,6 +202,8 @@ export function ScheduleForm({
         let chosenBay: string;
         if (isPaint) {
           chosenBay = paintBay;
+        } else if (taskName === "Touch up") {
+          chosenBay = "Paint Booth 2";
         } else if (taskName === "Sanding") {
           chosenBay = sandBay;
         } else {
@@ -219,12 +235,15 @@ export function ScheduleForm({
       return;
     }
 
+    const endKey = endDateState && endDateState > dateKey ? endDateState : dateKey;
+
     const payload = {
       truckId: normalizedTruck,
       work: resolvedWork,
       bay: finalBay,
       employee: employee.trim(),
       date: dateKey,
+      endDate: endKey,
       shift,
       ...(company.trim() ? { company: company.trim() } : {}),
       ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
@@ -271,8 +290,8 @@ export function ScheduleForm({
     onSubmit(payload);
     toast.success(
       isEdit
-        ? `Job updated for ${selectedDate.toLocaleDateString()}`
-        : `Job booked for ${selectedDate.toLocaleDateString()}`,
+        ? `Job updated for ${selectedDate.toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric", year: "numeric" })}`
+        : `Job booked for ${selectedDate.toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric", year: "numeric" })}`,
     );
     if (!isEdit) {
       setTruckId("");
@@ -418,15 +437,32 @@ export function ScheduleForm({
         </ToggleGroup>
       </div>
 
-      {isEdit && (
-        <div className="space-y-1.5">
-          <Label htmlFor="job-date">Date</Label>
-          <Input
-            id="job-date"
-            type="date"
-            value={dateKeyState}
-            onChange={(e) => setDateKeyState(e.target.value)}
-          />
+      {!isMixer && (
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-1.5">
+            <Label htmlFor="job-date">Start date</Label>
+            <Input
+              id="job-date"
+              type="date"
+              value={isEdit ? dateKeyState : toDateKey(selectedDate)}
+              disabled={!isEdit}
+              onChange={(e) => {
+                const v = e.target.value;
+                setDateKeyState(v);
+                if (v && endDateState < v) setEndDateState(v);
+              }}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="job-end-date">End date</Label>
+            <Input
+              id="job-end-date"
+              type="date"
+              min={isEdit ? dateKeyState : toDateKey(selectedDate)}
+              value={endDateState}
+              onChange={(e) => setEndDateState(e.target.value)}
+            />
+          </div>
         </div>
       )}
 
@@ -434,7 +470,7 @@ export function ScheduleForm({
       <Button type="submit" variant="default" className="w-full text-base font-normal tracking-wider">
         {isEdit
           ? "Save changes"
-          : `Schedule for ${selectedDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`}
+          : `Schedule for ${selectedDate.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}`}
       </Button>
 
       {isEdit && onDelete && initialJob && (
@@ -523,7 +559,7 @@ export function ScheduleForm({
             <AlertDialogDescription>
               {duplicateConfirm && (
                 <>
-                  {duplicateConfirm.existing.truckId} is already scheduled on {new Date(duplicateConfirm.existing.date + "T00:00:00").toLocaleDateString()} for {duplicateConfirm.existing.work} on bay {String(duplicateConfirm.existing.bay).replace(/\D/g, "") || duplicateConfirm.existing.bay}. Would you still like to add this task?
+                  {duplicateConfirm.existing.truckId} is already scheduled on {new Date(duplicateConfirm.existing.date + "T00:00:00").toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric", year: "numeric" })} for {duplicateConfirm.existing.work} on bay {String(duplicateConfirm.existing.bay).replace(/\D/g, "") || duplicateConfirm.existing.bay}. Would you still like to add this task?
                 </>
               )}
             </AlertDialogDescription>
@@ -623,7 +659,7 @@ export function HoursSection({
               <div className="min-w-0 flex-1">
                 <div className="truncate font-medium text-foreground">{h.person}</div>
                 <div className="text-muted-foreground">
-                  {new Date(`${h.date}T00:00:00`).toLocaleDateString()} · {formatTime(h.startTime)} – {formatTime(h.stopTime)}
+                  {new Date(`${h.date}T00:00:00`).toLocaleDateString(undefined, { weekday: "short", month: "numeric", day: "numeric", year: "numeric" })} · {formatTime(h.startTime)} – {formatTime(h.stopTime)}
                 </div>
               </div>
               <Button

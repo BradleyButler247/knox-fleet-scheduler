@@ -3,7 +3,7 @@ import { JobHoursDialog } from "@/components/JobHoursDialog";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
-import { toDateKey, type Job } from "@/lib/schedule-store";
+import { toDateKey, jobCoversDate, type Job } from "@/lib/schedule-store";
 
 function workColorClass(work: string) {
   switch (work) {
@@ -35,7 +35,7 @@ export function DaySchedule({
   onToggleComplete?: (id: string) => void;
 }) {
   const dayJobs = jobs
-    .filter((j) => j.date === toDateKey(date))
+    .filter((j) => jobCoversDate(j, toDateKey(date)))
     .sort((a, b) => a.bay.localeCompare(b.bay));
 
   return (

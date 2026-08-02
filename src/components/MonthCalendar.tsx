@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronUp, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { toDateKey, type Job } from "@/lib/schedule-store";
+import { toDateKey, jobDateKeys, type Job } from "@/lib/schedule-store";
 import { getHoliday } from "@/lib/holidays";
 
 
@@ -58,9 +58,11 @@ function SingleMonth({
   const jobsByDate = useMemo(() => {
     const map = new Map<string, Job[]>();
     for (const j of jobs) {
-      const arr = map.get(j.date) ?? [];
-      arr.push(j);
-      map.set(j.date, arr);
+      for (const key of jobDateKeys(j)) {
+        const arr = map.get(key) ?? [];
+        arr.push(j);
+        map.set(key, arr);
+      }
     }
     return map;
   }, [jobs]);

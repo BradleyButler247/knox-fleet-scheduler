@@ -24,7 +24,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { ScheduleForm } from "@/components/ScheduleForm";
 import { useEffect, useRef, useState } from "react";
-import { toDateKey, type Job } from "@/lib/schedule-store";
+import { toDateKey, jobCoversDate, type Job } from "@/lib/schedule-store";
 import { useBayNotes } from "@/lib/bay-notes-store";
 
 
@@ -98,7 +98,7 @@ export function BayGrid({
   const [selectedDate, setSelectedDate] = useState<Date>(date);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const dayJobs = jobs.filter((j) => j.date === toDateKey(selectedDate));
+  const dayJobs = jobs.filter((j) => jobCoversDate(j, toDateKey(selectedDate)));
   const { getNote: getBayNote, setNote: setBayNote } = useBayNotes();
   const [notesExtra, setNotesExtra] = useState(0);
   const [activeCell, setActiveCell] = useState<Cell | null>(null);
@@ -107,6 +107,16 @@ export function BayGrid({
   const [editJob, setEditJob] = useState<Job | null>(null);
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [movingJobId, setMovingJobId] = useState<string | null>(null);
+  const [dragOverBay, setDragOverBay] = useState<string | null>(null);
+
+  const moveJobToBay = (jobId: string, bay: string) => {
+    if (!updateJob) return;
+    const job = jobs.find((j) => j.id === jobId);
+    if (!job || job.bay === bay) return;
+    const { id: _id, createdAt: _createdAt, ...rest } = job;
+    updateJob(job.id, { ...rest, bay });
+  };
   const [expandedCells, setExpandedCells] = useState<Set<string>>(new Set());
 
   useEffect(() => setMounted(true), []);
@@ -233,9 +243,25 @@ export function BayGrid({
             type="button"
             key={i}
             onClick={() => setActiveCell(cell)}
+            onDragOver={(e) => {
+              if (!movingJobId || !updateJob) return;
+              e.preventDefault();
+              setDragOverBay(cell.bays[0]);
+            }}
+            onDragLeave={() => {
+              setDragOverBay((b) => (b === cell.bays[0] ? null : b));
+            }}
+            onDrop={(e) => {
+              if (!movingJobId || !updateJob) return;
+              e.preventDefault();
+              moveJobToBay(movingJobId, cell.bays[0]);
+              setMovingJobId(null);
+              setDragOverBay(null);
+            }}
             className={cn(
               "flex flex-col gap-2 rounded-lg border border-border bg-card p-3 text-left transition-colors hover:border-primary/50 hover:bg-accent/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               "overflow-hidden",
+              dragOverBay === cell.bays[0] && movingJobId ? "border-accent ring-2 ring-accent" : "",
             )}
             style={{
               gridColumn: `${cell.col} / span ${cell.colSpan ?? 1}`,
@@ -285,6 +311,17 @@ export function BayGrid({
                           key={j.id}
                           role="button"
                           tabIndex={0}
+                          draggable={!!updateJob}
+                          onDragStart={(e) => {
+                            e.stopPropagation();
+                            e.dataTransfer.effectAllowed = "move";
+                            e.dataTransfer.setData("text/plain", j.id);
+                            setMovingJobId(j.id);
+                          }}
+                          onDragEnd={() => {
+                            setMovingJobId(null);
+                            setDragOverBay(null);
+                          }}
                           onClick={(e) => {
                             e.stopPropagation();
                             setActiveCell(cell);
@@ -298,6 +335,7 @@ export function BayGrid({
                           className={cn(
                             "flex min-w-0 cursor-pointer flex-col gap-0.5 rounded border border-border/60 bg-background/50 px-2 py-1 text-xs hover:bg-accent/20",
                             j.completed ? "opacity-50" : "",
+                            movingJobId === j.id ? "opacity-40" : "",
                             shouldTruncate && idx >= 4 ? "hidden print:flex" : ""
                           )}
                         >

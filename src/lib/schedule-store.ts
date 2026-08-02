@@ -10,7 +10,8 @@ export type Job = {
   work: string;
   bay: string;
   employee: string;
-  date: string; // YYYY-MM-DD
+  date: string; // YYYY-MM-DD (start date)
+  endDate?: string; // YYYY-MM-DD (optional, defaults to date)
   shift: Shift;
   createdAt: number;
   completed?: boolean;
@@ -26,6 +27,7 @@ type Row = {
   bay: string;
   employee: string;
   date: string;
+  end_date: string | null;
   shift: string;
   completed: boolean;
   company: string | null;
@@ -49,6 +51,7 @@ function rowToJob(r: Row): Job {
     bay: r.bay,
     employee: r.employee ?? "",
     date: r.date,
+    endDate: r.end_date ?? undefined,
     shift: (r.shift as Shift) ?? "ALL_DAY",
     completed: r.completed ?? false,
     company: r.company ?? undefined,
@@ -58,6 +61,25 @@ function rowToJob(r: Row): Job {
   };
 }
 
+/** A job occupies every day from its start date through its end date (inclusive). */
+export function jobCoversDate(j: Job, dateKey: string) {
+  const end = j.endDate && j.endDate > j.date ? j.endDate : j.date;
+  return j.date <= dateKey && dateKey <= end;
+}
+
+/** All date keys a job spans. */
+export function jobDateKeys(j: Job): string[] {
+  const end = j.endDate && j.endDate > j.date ? j.endDate : j.date;
+  const keys: string[] = [];
+  const d = new Date(`${j.date}T00:00:00`);
+  const last = new Date(`${end}T00:00:00`);
+  while (d <= last) {
+    keys.push(toDateKey(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return keys.length ? keys : [j.date];
+}
+
 function jobToRow(j: Partial<Job>): Record<string, unknown> {
   const r: Record<string, unknown> = {};
   if (j.truckId !== undefined) r.truck_id = j.truckId;
@@ -65,6 +87,7 @@ function jobToRow(j: Partial<Job>): Record<string, unknown> {
   if (j.bay !== undefined) r.bay = j.bay;
   if (j.employee !== undefined) r.employee = j.employee;
   if (j.date !== undefined) r.date = j.date;
+  if (j.endDate !== undefined) r.end_date = j.endDate ?? null;
   if (j.shift !== undefined) r.shift = j.shift;
   if (j.completed !== undefined) r.completed = j.completed;
   if (j.company !== undefined) r.company = j.company ?? null;
@@ -72,6 +95,85 @@ function jobToRow(j: Partial<Job>): Record<string, unknown> {
   if (j.priority !== undefined) r.priority = j.priority ?? null;
   return r;
 }
+
+// ---- business-day helpers (pure) ----
+export function bumpToBusinessDay(d: Date) {
+  const out = new Date(d);
+  while (isNonBusinessDay(out)) out.setDate(out.getDate() + 1);
+  return out;
+}
+
+export function addBusinessDaysTo(date: Date, n: number) {
+  const out = new Date(date);
+  const dir = n >= 0 ? 1 : -1;
+  let remaining = Math.abs(n);
+  while (remaining > 0) {
+    out.setDate(out.getDate() + dir);
+    if (!isNonBusinessDay(out)) remaining--;
+  }
+  return out;
+}
+
+export function businessDaysBetweenDates(a: Date, b: Date) {
+  if (toDateKey(a) === toDateKey(b)) return 0;
+  const dir = b.getTime() > a.getTime() ? 1 : -1;
+  const cur = new Date(a);
+  let count = 0;
+  const target = toDateKey(b);
+  while (toDateKey(cur) !== target) {
+    cur.setDate(cur.getDate() + dir);
+    if (!isNonBusinessDay(cur)) count += dir;
+  }
+  return count;
+}
+
+export function nextBusinessDay(d: Date) {
+  const out = new Date(d);
+  out.setDate(out.getDate() + 1);
+  return bumpToBusinessDay(out);
+}
+
+/**
+ * Enforce one task per business day per truck: tasks run in order, and a task
+ * that spans multiple days pushes every following task to the next business
+ * day after it ends. Returns the changed jobs (with new start/end dates).
+ */
+export function resequenceTruck(
+  all: Job[],
+  truckId: string,
+): { id: string; date: string; endDate?: string }[] {
+  const list = all
+    .filter((j) => j.truckId === truckId)
+    .sort((a, b) =>
+      a.date === b.date ? a.createdAt - b.createdAt : a.date < b.date ? -1 : 1,
+    );
+
+  const changes: { id: string; date: string; endDate?: string }[] = [];
+  let cursor: Date | null = null;
+
+  for (const j of list) {
+    const origStart = new Date(`${j.date}T00:00:00`);
+    const origEnd =
+      j.endDate && j.endDate > j.date
+        ? new Date(`${j.endDate}T00:00:00`)
+        : new Date(origStart);
+    const span = Math.max(0, businessDaysBetweenDates(origStart, origEnd));
+
+    let start = bumpToBusinessDay(origStart);
+    if (cursor && start.getTime() < cursor.getTime()) start = new Date(cursor);
+
+    const end = span > 0 ? addBusinessDaysTo(start, span) : new Date(start);
+    const nd = toDateKey(start);
+    const ne = toDateKey(end);
+    const curEnd = j.endDate && j.endDate > j.date ? j.endDate : undefined;
+    if (nd !== j.date || (ne !== nd ? ne : undefined) !== curEnd) {
+      changes.push({ id: j.id, date: nd, endDate: ne !== nd ? ne : undefined });
+    }
+    cursor = nextBusinessDay(end);
+  }
+  return changes;
+}
+
 
 async function fetchAll(): Promise<Job[]> {
   const { data, error } = await supabase.from("jobs").select("*");
@@ -123,8 +225,14 @@ export function useJobs() {
       return;
     }
     const real = rowToJob(data as Row);
-    optimistic((prev) => prev.map((x) => (x.id === tempId ? real : x)));
+    let merged: Job[] = [];
+    setJobs((prev) => {
+      merged = prev.map((x) => (x.id === tempId ? real : x));
+      return merged;
+    });
+    await applyResequence(merged, real.truckId, []);
   };
+
 
   const removeJob = async (id: string) => {
     optimistic((prev) => prev.filter((j) => j.id !== id));
@@ -171,6 +279,36 @@ export function useJobs() {
     }
   };
 
+  /**
+   * Push following tasks for a truck so no two tasks share a day and any
+   * multi-day task moves the rest of the schedule out past its end date.
+   */
+  const applyResequence = async (
+    nextJobs: Job[],
+    truckId: string,
+    batch: { id: string; row: Record<string, unknown> }[],
+  ) => {
+    const changes = resequenceTruck(nextJobs, truckId);
+    if (changes.length) {
+      const map = new Map(changes.map((c) => [c.id, c]));
+      setJobs(
+        nextJobs.map((j) => {
+          const c = map.get(j.id);
+          return c ? { ...j, date: c.date, endDate: c.endDate } : j;
+        }),
+      );
+      for (const c of changes) {
+        const row = { date: c.date, end_date: c.endDate ?? null };
+        const existing = batch.find((b) => b.id === c.id);
+        if (existing) Object.assign(existing.row, row);
+        else batch.push({ id: c.id, row });
+      }
+    }
+    if (batch.length) await persistBatch(batch);
+  };
+
+
+
   const updateJob = async (
     id: string,
     updates: Omit<Job, "id" | "createdAt">,
@@ -199,35 +337,61 @@ export function useJobs() {
     finalUpdates = { ...updates, date: newDate ?? updates.date };
     const truckId = target.truckId;
 
+    // When a paint task is moved to a different booth, keep every later paint
+    // task for the same truck in that booth too.
+    const isPaint = (j: { work: string }) => j.work.trim().toLowerCase().startsWith("paint");
+    const newBay = finalUpdates.bay;
+    const bayChanged = !!newBay && newBay !== target.bay;
+    const targetRef = target;
+    const targetIsFirstPaint = !jobs.some(
+      (j) =>
+        j.id !== id &&
+        j.truckId === targetRef.truckId &&
+        isPaint(j) &&
+        j.date < targetRef.date,
+    );
+    const cascadePaint = bayChanged && isPaint(finalUpdates) && isPaint(target) && targetIsFirstPaint;
+    const cascadeBay = cascadePaint ? newBay : undefined;
+    const isLaterPaint = (j: Job) =>
+      cascadePaint &&
+      j.id !== id &&
+      j.truckId === truckId &&
+      isPaint(j) &&
+      j.date >= targetRef.date;
+
     const patched: Job[] = newJobs.map((j) => {
       if (j.id === id) return { ...j, ...finalUpdates };
+      let next = j;
+      if (isLaterPaint(j) && cascadeBay) next = { ...next, bay: cascadeBay };
       if (deltaBusinessDays !== 0 && j.truckId === truckId) {
         const shifted = addBusinessDays(
           new Date(`${j.date}T00:00:00`),
           deltaBusinessDays,
         );
-        return { ...j, date: toDateKey(shifted) };
+        next = { ...next, date: toDateKey(shifted) };
       }
-      return j;
+      return next;
     });
     setJobs(patched);
 
     const batch: { id: string; row: Record<string, unknown> }[] = [
       { id, row: jobToRow(finalUpdates) },
     ];
-    if (deltaBusinessDays !== 0) {
-      for (const j of jobs) {
-        if (j.id === id) continue;
-        if (j.truckId === truckId) {
-          const shifted = addBusinessDays(
-            new Date(`${j.date}T00:00:00`),
-            deltaBusinessDays,
-          );
-          batch.push({ id: j.id, row: { date: toDateKey(shifted) } });
-        }
+    for (const j of jobs) {
+      if (j.id === id) continue;
+      const row: Record<string, unknown> = {};
+      if (isLaterPaint(j) && cascadeBay) row.bay = cascadeBay;
+      if (deltaBusinessDays !== 0 && j.truckId === truckId) {
+        const shifted = addBusinessDays(
+          new Date(`${j.date}T00:00:00`),
+          deltaBusinessDays,
+        );
+        row.date = toDateKey(shifted);
       }
+      if (Object.keys(row).length > 0) batch.push({ id: j.id, row });
     }
-    await persistBatch(batch);
+    await applyResequence(patched, truckId, batch);
+
   };
 
   const toggleComplete = async (id: string) => {
@@ -276,7 +440,8 @@ export function useJobs() {
       return j;
     });
     setJobs(nextJobs);
-    await persistBatch(batch);
+    await applyResequence(nextJobs, target.truckId, batch);
+
   };
 
   const duplicateJob = async (id: string, newDate: string) => {
@@ -319,8 +484,11 @@ export function useJobs() {
       return;
     }
     const real = rowToJob(data as Row);
-    setJobs((prev) => prev.map((x) => (x.id === dup.id ? real : x)));
+    const merged = [...shifted, real];
+    setJobs(merged);
+    await applyResequence(merged, target.truckId, []);
   };
+
 
   const reorderJobs = async (updates: { id: string; priority: number }[]) => {
     const map = new Map(updates.map((u) => [u.id, u.priority]));
