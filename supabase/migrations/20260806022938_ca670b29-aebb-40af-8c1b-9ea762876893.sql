@@ -1,0 +1,1 @@
+ALTER TABLE public.jobs ADD COLUMN IF NOT EXISTS allow_overlap boolean NOT NULL DEFAULT false;
