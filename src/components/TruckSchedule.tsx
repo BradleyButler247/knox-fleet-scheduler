@@ -385,13 +385,18 @@ function updatePendingJob(
   const target = jobs.find((job) => job.id === id);
   const nextBay = patch.bay;
   const manuallyMoved = patch.date !== undefined && patch.date !== target?.date;
-  const resolvedPatch = manuallyMoved ? { ...patch, allowOverlap: true } : patch;
+  const manuallyChangedEnd =
+    patch.endDate !== undefined &&
+    patch.endDate !== (target?.endDate ?? target?.date);
+  const manuallyChangedSchedule = manuallyMoved || manuallyChangedEnd;
+  const resolvedPatch = manuallyChangedSchedule
+    ? { ...patch, allowOverlap: true }
+    : patch;
 
-  // A manually changed start date is authoritative and may overlap another
-  // task. Other edits (especially extending an end date) keep the default
-  // behavior of pushing following tasks forward.
+  // A manually changed date range is authoritative and may overlap another
+  // task without moving any of the truck's other tasks.
   const apply = (next: PendingJob[]) =>
-    manuallyMoved
+    manuallyChangedSchedule
       ? next
       : resequencePending(next);
 

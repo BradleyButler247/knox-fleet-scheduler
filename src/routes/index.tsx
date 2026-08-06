@@ -16,6 +16,7 @@ import { Paintbrush, Plus, ArrowLeft, CalendarDays, ListChecks, Truck, ChevronLe
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ScheduleForm } from "@/components/ScheduleForm";
 import { DaySchedule } from "@/components/DaySchedule";
+import { DayGrid } from "@/components/DayGrid";
 import { MonthCalendar } from "@/components/MonthCalendar";
 import { TruckSchedule } from "@/components/TruckSchedule";
 import { BayGrid } from "@/components/BayGrid";
@@ -118,170 +119,28 @@ function Index() {
           </TabsList>
 
           <TabsContent value="calendar" className="mt-4">
-            {(() => {
-              const calendarContent = (
-                <Card className="h-full">
-                  <CardContent className="pt-6">
-                    <MonthCalendar
-                      month={month}
-                      onMonthChange={setMonth}
-                      selected={openDay ?? today}
-                      onSelect={handleSelect}
-                      jobs={jobs}
-                    />
-                  </CardContent>
-                </Card>
-              );
-
-              const selectedDate = openDay ?? today;
-              const dayJobCount = jobs.filter(
-                (j) => jobCoversDate(j, toDateKey(selectedDate)),
-              ).length;
-              const dayContent = (
-                <Card className="h-full">
-                  <CardContent className="pt-6">
-                    <div className="space-y-4">
-                      <div className="flex items-end justify-between border-b border-border pb-3">
-                        <div>
-                          <p className="text-xs uppercase tracking-[0.2em] text-muted-foreground">
-                            {selectedDate.toLocaleDateString(undefined, { weekday: "long" })}
-                          </p>
-                          <h2 className="font-display text-3xl text-foreground">
-                            {selectedDate.toLocaleDateString(undefined, { month: "long", day: "numeric" })}
-                          </h2>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Badge variant="secondary" className="font-display text-base px-3 py-1">
-                            {dayJobCount} {dayJobCount === 1 ? "job" : "jobs"}
-                          </Badge>
-                          {mode === "schedule" ? (
-                            <Button
-                              size="icon"
-                              onClick={() => setMode("form")}
-                              aria-label="Add new job"
-                              className="rounded-full"
-                            >
-                              <Plus className="h-5 w-5" />
-                            </Button>
-                          ) : (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              onClick={() => {
-                                setMode("schedule");
-                                setEditingId(null);
-                              }}
-                              aria-label="Back to schedule"
-                            >
-                              <ArrowLeft className="h-4 w-4" />
-                            </Button>
-                          )}
-                        </div>
-                      </div>
-
-                      {mode === "schedule" ? (
-                        <DaySchedule
-                          date={selectedDate}
-                          jobs={jobs}
-                          onRemove={removeJob}
-                          onToggleComplete={toggleComplete}
-                          onEdit={(job) => {
-                            setEditingId(job.id);
-                            setMode("form");
-                          }}
-                        />
-                      ) : (
-                        <ScheduleForm
-                          selectedDate={selectedDate}
-                          initialJob={editingJob}
-                          existingJobs={jobs}
-                          onSubmit={(j) => {
-                            if (editingJob) {
-                              updateJob(editingJob.id, j);
-                            } else {
-                              addJob(j);
-                            }
-                            setEditingId(null);
-                            setMode("schedule");
-                          }}
-                          onDelete={(id) => {
-                            removeJob(id);
-                            setEditingId(null);
-                            setMode("schedule");
-                          }}
-                        />
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-
-              if (!mounted) {
-                return (
-                  <div className="grid gap-6 lg:grid-cols-[3fr_minmax(24rem,1fr)]">
-                    {calendarContent}
-                    {dayContent}
-                  </div>
-                );
-              }
-
-              return (
-                <ResizablePanelGroup className="min-h-[600px] w-full overflow-hidden">
-                  <ResizablePanel
-                    panelRef={calendarPanelRef}
-                    defaultSize={67}
-                    minSize="20rem"
-                    collapsible
-                    collapsedSize="3rem"
-                    id="calendar-panel-v2"
-                    className="pr-3"
-                    onResize={() => {
-                      const c = calendarPanelRef.current?.isCollapsed() ?? false;
-                      setCalendarCollapsed(c);
-                    }}
-                  >
-                    {calendarCollapsed ? (
-                      <button
-                        onClick={() => calendarPanelRef.current?.expand()}
-                        aria-label="Expand calendar"
-                        className="flex h-full w-full items-center justify-center rounded-md border border-border bg-card/40 text-muted-foreground transition-colors hover:bg-accent/20 hover:text-accent"
-                      >
-                        <ChevronRight className="h-5 w-5" />
-                      </button>
-                    ) : (
-                      calendarContent
-                    )}
-                  </ResizablePanel>
-                  <ResizableHandle withHandle className="mx-1.5 bg-transparent" />
-                  <ResizablePanel
-                    panelRef={dayPanelRef}
-                    defaultSize={33}
-                    minSize="18rem"
-                    collapsible
-                    collapsedSize="3rem"
-                    id="day-panel-v2"
-                    className="pl-3"
-                    onResize={() => {
-                      const c = dayPanelRef.current?.isCollapsed() ?? false;
-                      setDayCollapsed(c);
-                    }}
-                  >
-                    {dayCollapsed ? (
-                      <button
-                        onClick={() => dayPanelRef.current?.expand()}
-                        aria-label="Expand day schedule"
-                        className="flex h-full w-full items-center justify-center rounded-md border border-border bg-card/40 text-muted-foreground transition-colors hover:bg-accent/20 hover:text-accent"
-                      >
-                        <ChevronLeft className="h-5 w-5" />
-                      </button>
-                    ) : (
-                      dayContent
-                    )}
-                  </ResizablePanel>
-                </ResizablePanelGroup>
-              );
-            })()}
+            <Card>
+              <CardContent className="pt-6">
+                <DayGrid
+                  date={openDay ?? today}
+                  jobs={jobs}
+                  onEditJob={(job) => {
+                    setOpenDay(new Date(`${job.date}T00:00:00`));
+                    setEditingId(job.id);
+                    setMode("form");
+                    setDialogOpen(true);
+                  }}
+                  onAddJob={(d) => {
+                    setOpenDay(d);
+                    setEditingId(null);
+                    setMode("form");
+                    setDialogOpen(true);
+                  }}
+                />
+              </CardContent>
+            </Card>
           </TabsContent>
+
 
           <TabsContent value="bay" className="mt-4">
             <Card>

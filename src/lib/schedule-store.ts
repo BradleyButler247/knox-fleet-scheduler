@@ -329,18 +329,24 @@ export function useJobs() {
     if (!target) return;
 
     const oldDate = target.date;
+    const oldEndDate = target.endDate ?? target.date;
     let newDate = updates.date;
-    // A manual date change pins the task to the chosen day: it may share a day
-    // with another task for the same truck and is never auto-pushed again.
+    // A manual schedule change pins the task to the chosen range: it may share
+    // days with other tasks and must not move the rest of the truck schedule.
     const manualMove = !!newDate && newDate !== oldDate;
     if (manualMove) {
       const bumped = bumpWeekendToMonday(new Date(`${newDate}T00:00:00`));
       newDate = toDateKey(bumped);
     }
+    const newEndDate = updates.endDate ?? updates.date;
+    const manualScheduleChange =
+      manualMove || (!!newEndDate && newEndDate !== oldEndDate);
     finalUpdates = {
       ...updates,
       date: newDate ?? updates.date,
-      allowOverlap: manualMove ? true : (updates.allowOverlap ?? target.allowOverlap ?? false),
+      allowOverlap: manualScheduleChange
+        ? true
+        : (updates.allowOverlap ?? target.allowOverlap ?? false),
     };
     const truckId = target.truckId;
 
@@ -383,7 +389,8 @@ export function useJobs() {
       if (isLaterPaint(j) && cascadeBay) row.bay = cascadeBay;
       if (Object.keys(row).length > 0) batch.push({ id: j.id, row });
     }
-    await applyResequence(patched, truckId, batch);
+    if (manualScheduleChange) await persistBatch(batch);
+    else await applyResequence(patched, truckId, batch);
 
   };
 

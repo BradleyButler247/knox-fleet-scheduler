@@ -243,6 +243,9 @@ export function ScheduleForm({
       employee: employee.trim(),
       date: dateKey,
       endDate: endKey,
+      // A user-selected multi-day range is authoritative; keep the truck's
+      // other tasks on their existing dates even when the ranges overlap.
+      ...(endKey > dateKey ? { allowOverlap: true } : {}),
       shift,
       ...(company.trim() ? { company: company.trim() } : {}),
       ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
