@@ -336,7 +336,11 @@ function TruckWeekView({
   );
 }
 
-type PendingJob = WeekItem & { date: string; endDate?: string };
+type PendingJob = WeekItem & {
+  date: string;
+  endDate?: string;
+  allowOverlap?: boolean;
+};
 
 /**
  * One task per day per truck: tasks run in sequence and a multi-day task
@@ -345,6 +349,7 @@ type PendingJob = WeekItem & { date: string; endDate?: string };
 function resequencePending(jobs: PendingJob[]): PendingJob[] {
   const order = jobs
     .map((j, i) => ({ j, i }))
+    .filter(({ j }) => !j.allowOverlap)
     .sort((a, b) => (a.j.date === b.j.date ? a.i - b.i : a.j.date < b.j.date ? -1 : 1));
 
   const changes = new Map<string, { date: string; endDate?: string }>();
@@ -379,11 +384,19 @@ function updatePendingJob(
 ): PendingJob[] {
   const target = jobs.find((job) => job.id === id);
   const nextBay = patch.bay;
+  const manuallyMoved = patch.date !== undefined && patch.date !== target?.date;
+  const resolvedPatch = manuallyMoved ? { ...patch, allowOverlap: true } : patch;
 
-  const apply = (next: PendingJob[]) => resequencePending(next);
+  // A manually changed start date is authoritative and may overlap another
+  // task. Other edits (especially extending an end date) keep the default
+  // behavior of pushing following tasks forward.
+  const apply = (next: PendingJob[]) =>
+    manuallyMoved
+      ? next
+      : resequencePending(next);
 
   if (!target || target.work !== "Paint" || !nextBay || nextBay === target.bay) {
-    return apply(jobs.map((job) => (job.id === id ? { ...job, ...patch } : job)));
+    return apply(jobs.map((job) => (job.id === id ? { ...job, ...resolvedPatch } : job)));
   }
 
   const firstPaint = jobs
@@ -392,12 +405,12 @@ function updatePendingJob(
     .sort((a, b) => a.job.date.localeCompare(b.job.date) || a.index - b.index)[0];
 
   if (!firstPaint || firstPaint.job.id !== id) {
-    return apply(jobs.map((job) => (job.id === id ? { ...job, ...patch } : job)));
+    return apply(jobs.map((job) => (job.id === id ? { ...job, ...resolvedPatch } : job)));
   }
 
   return apply(
     jobs.map((job) => {
-      if (job.id === id) return { ...job, ...patch };
+      if (job.id === id) return { ...job, ...resolvedPatch };
       if (job.work === "Paint") return { ...job, bay: nextBay };
       return job;
     }),
@@ -2173,6 +2186,7 @@ export function TruckSchedule({
               bay: j.bay,
               employee: j.employee,
               shift: j.shift,
+              allowOverlap: j.allowOverlap,
               ...(j.color ? { color: j.color } : {}),
             }));
             return (
@@ -2217,7 +2231,8 @@ export function TruckSchedule({
                     // Updates + additions
                     for (const it of items) {
                       if (originalIds.has(it.id) && updateJob) {
-                        const orig = truckJobs.find((j) => j.id === it.id)!;
+                        const orig = truckJobs.find((j) => j.id === it.id);
+                        if (!orig) continue;
                         const changed =
                           orig.work !== it.work ||
                           orig.bay !== it.bay ||
@@ -2240,6 +2255,7 @@ export function TruckSchedule({
                             company: companyVal,
                             color: it.color,
                             completed: orig.completed,
+                            allowOverlap: it.allowOverlap,
                           });
                         }
                       } else if (!originalIds.has(it.id)) {
@@ -2253,6 +2269,7 @@ export function TruckSchedule({
                           shift: it.shift,
                           company: companyVal,
                           color: it.color,
+                          allowOverlap: it.allowOverlap,
                         });
                       }
                     }

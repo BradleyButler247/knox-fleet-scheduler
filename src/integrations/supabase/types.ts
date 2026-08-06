@@ -125,6 +125,7 @@ export type Database = {
       }
       jobs: {
         Row: {
+          allow_overlap: boolean
           bay: string
           color: string | null
           company: string | null
@@ -141,6 +142,7 @@ export type Database = {
           work: string
         }
         Insert: {
+          allow_overlap?: boolean
           bay: string
           color?: string | null
           company?: string | null
@@ -157,6 +159,7 @@ export type Database = {
           work: string
         }
         Update: {
+          allow_overlap?: boolean
           bay?: string
           color?: string | null
           company?: string | null

@@ -18,6 +18,8 @@ export type Job = {
   company?: string;
   color?: string;
   priority?: number;
+  /** When true, this task is pinned to its dates and may share a day with others. */
+  allowOverlap?: boolean;
 };
 
 type Row = {
@@ -33,6 +35,7 @@ type Row = {
   company: string | null;
   color: string | null;
   priority: number | null;
+  allow_overlap: boolean | null;
   created_at_ms: number;
 };
 
@@ -57,6 +60,7 @@ function rowToJob(r: Row): Job {
     company: r.company ?? undefined,
     color: r.color ?? undefined,
     priority: r.priority ?? undefined,
+    allowOverlap: r.allow_overlap ?? false,
     createdAt: Number(r.created_at_ms) || Date.now(),
   };
 }
@@ -93,6 +97,7 @@ function jobToRow(j: Partial<Job>): Record<string, unknown> {
   if (j.company !== undefined) r.company = j.company ?? null;
   if (j.color !== undefined) r.color = j.color ?? null;
   if (j.priority !== undefined) r.priority = j.priority ?? null;
+  if (j.allowOverlap !== undefined) r.allow_overlap = !!j.allowOverlap;
   return r;
 }
 
@@ -143,7 +148,7 @@ export function resequenceTruck(
   truckId: string,
 ): { id: string; date: string; endDate?: string }[] {
   const list = all
-    .filter((j) => j.truckId === truckId)
+    .filter((j) => j.truckId === truckId && !j.allowOverlap)
     .sort((a, b) =>
       a.date === b.date ? a.createdAt - b.createdAt : a.date < b.date ? -1 : 1,
     );
@@ -313,7 +318,6 @@ export function useJobs() {
     id: string,
     updates: Omit<Job, "id" | "createdAt">,
   ) => {
-    let deltaBusinessDays = 0;
     let target: Job | undefined;
     let finalUpdates = updates;
 
@@ -326,15 +330,18 @@ export function useJobs() {
 
     const oldDate = target.date;
     let newDate = updates.date;
-    if (newDate && newDate !== oldDate) {
+    // A manual date change pins the task to the chosen day: it may share a day
+    // with another task for the same truck and is never auto-pushed again.
+    const manualMove = !!newDate && newDate !== oldDate;
+    if (manualMove) {
       const bumped = bumpWeekendToMonday(new Date(`${newDate}T00:00:00`));
       newDate = toDateKey(bumped);
-      deltaBusinessDays = businessDaysBetween(
-        new Date(`${oldDate}T00:00:00`),
-        new Date(`${newDate}T00:00:00`),
-      );
     }
-    finalUpdates = { ...updates, date: newDate ?? updates.date };
+    finalUpdates = {
+      ...updates,
+      date: newDate ?? updates.date,
+      allowOverlap: manualMove ? true : (updates.allowOverlap ?? target.allowOverlap ?? false),
+    };
     const truckId = target.truckId;
 
     // When a paint task is moved to a different booth, keep every later paint
@@ -363,13 +370,6 @@ export function useJobs() {
       if (j.id === id) return { ...j, ...finalUpdates };
       let next = j;
       if (isLaterPaint(j) && cascadeBay) next = { ...next, bay: cascadeBay };
-      if (deltaBusinessDays !== 0 && j.truckId === truckId) {
-        const shifted = addBusinessDays(
-          new Date(`${j.date}T00:00:00`),
-          deltaBusinessDays,
-        );
-        next = { ...next, date: toDateKey(shifted) };
-      }
       return next;
     });
     setJobs(patched);
@@ -381,13 +381,6 @@ export function useJobs() {
       if (j.id === id) continue;
       const row: Record<string, unknown> = {};
       if (isLaterPaint(j) && cascadeBay) row.bay = cascadeBay;
-      if (deltaBusinessDays !== 0 && j.truckId === truckId) {
-        const shifted = addBusinessDays(
-          new Date(`${j.date}T00:00:00`),
-          deltaBusinessDays,
-        );
-        row.date = toDateKey(shifted);
-      }
       if (Object.keys(row).length > 0) batch.push({ id: j.id, row });
     }
     await applyResequence(patched, truckId, batch);

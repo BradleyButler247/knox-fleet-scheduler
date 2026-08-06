@@ -121,7 +121,6 @@ export function ScheduleForm({
     existing: Job;
     payload: Omit<Job, "id" | "createdAt">;
   } | null>(null);
-  const [duplicateBlock, setDuplicateBlock] = useState<Job | null>(null);
   const [duplicateConfirm, setDuplicateConfirm] = useState<{
     existing: Job;
     payload: Omit<Job, "id" | "createdAt">;
@@ -271,11 +270,6 @@ export function ScheduleForm({
           j.truckId === normalizedTruck &&
           j.work === resolvedWork,
       );
-      const sameDay = sameTruckTask.find((j) => j.date === dateKey);
-      if (sameDay) {
-        setDuplicateBlock(sameDay);
-        return;
-      }
       if (sameTruckTask.length > 0) {
         setDuplicateConfirm({ existing: sameTruckTask[0], payload });
         return;
@@ -466,7 +460,6 @@ export function ScheduleForm({
         </div>
       )}
 
-
       <Button type="submit" variant="default" className="w-full text-base font-normal tracking-wider">
         {isEdit
           ? "Save changes"
@@ -529,25 +522,6 @@ export function ScheduleForm({
             >
               Yes
             </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-
-
-      <AlertDialog open={duplicateBlock !== null} onOpenChange={(o) => !o && setDuplicateBlock(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Duplicate task</AlertDialogTitle>
-            <AlertDialogDescription>
-              {duplicateBlock && (
-                <>
-                  {duplicateBlock.truckId} is already scheduled for {duplicateBlock.work} on bay {String(duplicateBlock.bay).replace(/\D/g, "") || duplicateBlock.bay}
-                </>
-              )}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogAction onClick={() => setDuplicateBlock(null)}>OK</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
