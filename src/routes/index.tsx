@@ -22,6 +22,16 @@ import { TruckSchedule } from "@/components/TruckSchedule";
 import { BayGrid } from "@/components/BayGrid";
 import { ThemeToggle } from "@/components/ThemeToggle";
 import { useJobs, toDateKey, jobCoversDate } from "@/lib/schedule-store";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -45,7 +55,7 @@ export const Route = createFileRoute("/")({
 type Mode = "schedule" | "form";
 
 function Index() {
-  const { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck, rescheduleFromJob, duplicateJob, reorderJobs } = useJobs();
+  const { jobs, addJob, removeJob, updateJob, toggleComplete, renameTruck, rescheduleFromJob, duplicateJob, reorderJobs, pendingResequence, resolveResequence } = useJobs();
   const today = new Date();
   const [month, setMonth] = useState<Date>(
     new Date(today.getFullYear(), today.getMonth(), 1),
@@ -327,6 +337,29 @@ function Index() {
           )}
         </DialogContent>
       </Dialog>
+
+      <AlertDialog open={!!pendingResequence}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Reschedule the following tasks?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingResequence
+                ? `${pendingResequence.changes.length} later task${
+                    pendingResequence.changes.length === 1 ? "" : "s"
+                  } for truck ${pendingResequence.truckId} now share a day with another task. Would you like each of them moved to their own day, or left on their current dates?`
+                : null}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => resolveResequence(false)}>
+              Leave current dates
+            </AlertDialogCancel>
+            <AlertDialogAction onClick={() => resolveResequence(true)}>
+              Give each its own day
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

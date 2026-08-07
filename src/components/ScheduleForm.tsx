@@ -34,7 +34,7 @@ const BAYS = [
   "Paint Booth 1",
   "Paint Booth 2",
 ];
-const WORK_OPTIONS = ["Mixer 2 Color", "Mixer 3 Color", "Disassembly", "Sandblast", "Sanding", "Paint", "Assembly", "Touch up", "Check-in", "Touchups", "Other"] as const;
+const WORK_OPTIONS = ["Mixer 2 Color", "Mixer 3 Color", "Disassembly", "Sandblast", "Sanding", "Paint", "Assembly", "Touch up", "Check-in", "Other"] as const;
 
 export const MIXER_PRESETS: Record<string, string[]> = {
   "Mixer 2 Color": ["Disassembly", "Sandblast", "Sanding", "Paint 1", "Paint 2", "Assembly", "Touch up"],

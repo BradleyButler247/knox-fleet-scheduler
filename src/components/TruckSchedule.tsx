@@ -444,7 +444,6 @@ const WORK_OPTIONS = [
   "Assembly",
   "Touch up",
   "Check-in",
-  "Touchups",
   "Other",
 ] as const;
 
