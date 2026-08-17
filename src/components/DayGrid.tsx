@@ -1,6 +1,14 @@
 import { useMemo, useState } from "react";
-import { ChevronLeft, ChevronRight, MapPin, Plus, User } from "lucide-react";
+import { ChevronLeft, ChevronRight, MapPin, Plus, Search, User } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { toDateKey, jobCoversDate, type Job } from "@/lib/schedule-store";
 import { getHoliday } from "@/lib/holidays";
@@ -44,9 +52,11 @@ export function DayGrid({
   date: Date;
   jobs: Job[];
   onEditJob?: (job: Job) => void;
-  onAddJob?: (date: Date) => void;
+  onAddJob?: (date: Date, truckId?: string) => void;
 }) {
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(date));
+  const [query, setQuery] = useState("");
+  const [companyFilter, setCompanyFilter] = useState<string>("__all__");
 
   // Two weeks of weekdays only (Mon–Fri x 2)
   const days = useMemo(
@@ -63,13 +73,35 @@ export function DayGrid({
     [jobs, dayKeys.join("|")],
   );
 
-  const truckIds = useMemo(
+  const companies = useMemo(
     () =>
-      Array.from(new Set(weekJobs.map((j) => j.truckId))).sort((a, b) =>
-        a.localeCompare(b, undefined, { numeric: true }),
-      ),
-    [weekJobs],
+      Array.from(
+        new Set(jobs.map((j) => (j.company ?? "").trim()).filter(Boolean)),
+      ).sort((a, b) => a.localeCompare(b)),
+    [jobs],
   );
+
+  const truckCompanies = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const j of jobs) {
+      const c = (j.company ?? "").trim();
+      if (c && !map.has(j.truckId)) map.set(j.truckId, c);
+    }
+    return map;
+  }, [jobs]);
+
+  const truckIds = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return Array.from(new Set(weekJobs.map((j) => j.truckId)))
+      .filter((id) => {
+        if (q && !id.toLowerCase().includes(q)) return false;
+        const c = truckCompanies.get(id) ?? "";
+        if (companyFilter === "__all__") return true;
+        if (companyFilter === "__none__") return !c;
+        return c === companyFilter;
+      })
+      .sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [weekJobs, query, companyFilter, truckCompanies]);
 
   const todayKey = toDateKey(new Date());
   const gridCols = "grid grid-cols-[7rem_repeat(10,minmax(0,1fr))]";
@@ -97,6 +129,32 @@ export function DayGrid({
             <ChevronRight className="h-4 w-4" />
           </Button>
         </div>
+      </div>
+
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center print:hidden">
+        <div className="relative flex-1">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search truck ID…"
+            className="pl-9"
+          />
+        </div>
+        <Select value={companyFilter} onValueChange={setCompanyFilter}>
+          <SelectTrigger className="sm:w-56">
+            <SelectValue placeholder="Filter by company" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All companies</SelectItem>
+            <SelectItem value="__none__">No company</SelectItem>
+            {companies.map((c) => (
+              <SelectItem key={c} value={c}>
+                {c}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="max-h-[calc(100vh-15rem)] overflow-auto print:max-h-none print:overflow-visible">
@@ -180,7 +238,7 @@ export function DayGrid({
                       {onAddJob && (
                         <button
                           type="button"
-                          onClick={() => onAddJob(d)}
+                          onClick={() => onAddJob(d, truckId)}
                           aria-label={`Add job on ${key}`}
                           className="flex w-full items-center justify-center rounded-md border border-dashed border-transparent py-1 text-muted-foreground opacity-0 transition hover:border-accent hover:text-accent focus:opacity-100 group-hover:opacity-100 hover:opacity-100"
                         >

@@ -20,7 +20,18 @@ export type Job = {
   priority?: number;
   /** When true, this task is pinned to its dates and may share a day with others. */
   allowOverlap?: boolean;
+  /**
+   * Transient (never persisted): when true, the truck's other tasks stay on
+   * their current dates instead of being resequenced.
+   */
+  keepOthers?: boolean;
+  /**
+   * Transient (never persisted): when true, moving this task pushes every
+   * following task for the truck by the same number of business days.
+   */
+  shiftFollowing?: boolean;
 };
+
 
 type Row = {
   id: string;
@@ -78,11 +89,13 @@ export function jobDateKeys(j: Job): string[] {
   const d = new Date(`${j.date}T00:00:00`);
   const last = new Date(`${end}T00:00:00`);
   while (d <= last) {
-    keys.push(toDateKey(d));
+    // Weekends/holidays are never worked, so a Fri–Mon span occupies Fri + Mon only.
+    if (!isNonBusinessDay(d)) keys.push(toDateKey(d));
     d.setDate(d.getDate() + 1);
   }
   return keys.length ? keys : [j.date];
 }
+
 
 function jobToRow(j: Partial<Job>): Record<string, unknown> {
   const r: Record<string, unknown> = {};
@@ -157,34 +170,115 @@ export function resequenceTruck(
   const changes: { id: string; date: string; endDate?: string }[] = [];
   let cursor: Date | null = null;
 
+  // Tasks that currently share a start date move together and stay on the
+  // same day as each other.
+  const groups: Job[][] = [];
   for (const j of list) {
-    const origStart = new Date(`${j.date}T00:00:00`);
-    const origEnd =
-      j.endDate && j.endDate > j.date
-        ? new Date(`${j.endDate}T00:00:00`)
-        : new Date(origStart);
+    const last = groups[groups.length - 1];
+    if (last && last[0].date === j.date) last.push(j);
+    else groups.push([j]);
+  }
 
-    const pinned = j.allowOverlap || pinnedIds?.has(j.id);
-    if (pinned) {
+  for (const group of groups) {
+    const unpinned = group.filter((j) => !(j.allowOverlap || pinnedIds?.has(j.id)));
+    const pinnedGroup = group.filter((j) => j.allowOverlap || pinnedIds?.has(j.id));
+
+    for (const j of pinnedGroup) {
+      const origStart = new Date(`${j.date}T00:00:00`);
+      const origEnd =
+        j.endDate && j.endDate > j.date
+          ? new Date(`${j.endDate}T00:00:00`)
+          : new Date(origStart);
       const next = nextBusinessDay(origEnd);
       if (!cursor || next.getTime() > cursor.getTime()) cursor = next;
-      continue;
     }
 
-    const span = Math.max(0, businessDaysBetweenDates(origStart, origEnd));
+    if (!unpinned.length) continue;
 
-    let start = bumpToBusinessDay(origStart);
+    const groupStartOrig = new Date(`${unpinned[0].date}T00:00:00`);
+    let start = bumpToBusinessDay(groupStartOrig);
     if (cursor && start.getTime() < cursor.getTime()) start = new Date(cursor);
 
-    const end = span > 0 ? addBusinessDaysTo(start, span) : new Date(start);
-    const nd = toDateKey(start);
-    const ne = toDateKey(end);
-    const curEnd = j.endDate && j.endDate > j.date ? j.endDate : undefined;
-    if (nd !== j.date || (ne !== nd ? ne : undefined) !== curEnd) {
-      changes.push({ id: j.id, date: nd, endDate: ne !== nd ? ne : undefined });
+    let groupEnd = new Date(start);
+    for (const j of unpinned) {
+      const origStart = new Date(`${j.date}T00:00:00`);
+      const origEnd =
+        j.endDate && j.endDate > j.date
+          ? new Date(`${j.endDate}T00:00:00`)
+          : new Date(origStart);
+      const span = Math.max(0, businessDaysBetweenDates(origStart, origEnd));
+      const end = span > 0 ? addBusinessDaysTo(start, span) : new Date(start);
+      if (end.getTime() > groupEnd.getTime()) groupEnd = new Date(end);
+
+      const nd = toDateKey(start);
+      const ne = toDateKey(end);
+      const curEnd = j.endDate && j.endDate > j.date ? j.endDate : undefined;
+      if (nd !== j.date || (ne !== nd ? ne : undefined) !== curEnd) {
+        changes.push({ id: j.id, date: nd, endDate: ne !== nd ? ne : undefined });
+      }
     }
-    cursor = nextBusinessDay(end);
+    cursor = nextBusinessDay(groupEnd);
   }
+  return changes;
+}
+
+/**
+ * Move only the tasks that followed `targetId` before an edit. Every following
+ * task is treated as one schedule unit and receives the same business-day
+ * offset, preserving relative spacing, order, and same-day groupings exactly.
+ */
+export function resequenceFollowingTruck(
+  before: Job[],
+  after: Job[],
+  targetId: string,
+): { id: string; date: string; endDate?: string }[] {
+  const targetBefore = before.find((j) => j.id === targetId);
+  const targetAfter = after.find((j) => j.id === targetId);
+  if (!targetBefore || !targetAfter) return [];
+
+  const originalOrder = before
+    .filter((j) => j.truckId === targetBefore.truckId)
+    .sort((a, b) =>
+      a.date === b.date ? a.createdAt - b.createdAt : a.date < b.date ? -1 : 1,
+    );
+  const targetIndex = originalOrder.findIndex((j) => j.id === targetId);
+  if (targetIndex < 0) return [];
+
+  const following = originalOrder.slice(targetIndex + 1);
+  if (!following.length) return [];
+
+  const targetEndKey =
+    targetAfter.endDate && targetAfter.endDate > targetAfter.date
+      ? targetAfter.endDate
+      : targetAfter.date;
+  const cursor = nextBusinessDay(new Date(`${targetEndKey}T00:00:00`));
+  const firstFollowingStart = bumpToBusinessDay(
+    new Date(`${following[0].date}T00:00:00`),
+  );
+  const offset = Math.max(0, businessDaysBetweenDates(firstFollowingStart, cursor));
+  const changes: { id: string; date: string; endDate?: string }[] = [];
+
+  for (const originalJob of following) {
+    const currentJob = after.find((j) => j.id === originalJob.id) ?? originalJob;
+    const originalStart = new Date(`${originalJob.date}T00:00:00`);
+    const originalEnd =
+      originalJob.endDate && originalJob.endDate > originalJob.date
+        ? new Date(`${originalJob.endDate}T00:00:00`)
+        : new Date(originalStart);
+    const shiftedStart = addBusinessDaysTo(originalStart, offset);
+    const shiftedEnd = addBusinessDaysTo(originalEnd, offset);
+    const date = toDateKey(shiftedStart);
+    const endKey = toDateKey(shiftedEnd);
+    const endDate = endKey !== date ? endKey : undefined;
+    const currentEnd =
+      currentJob.endDate && currentJob.endDate > currentJob.date
+        ? currentJob.endDate
+        : undefined;
+    if (date !== currentJob.date || endDate !== currentEnd || currentJob.allowOverlap) {
+      changes.push({ id: currentJob.id, date, endDate });
+    }
+  }
+
   return changes;
 }
 
@@ -201,10 +295,6 @@ async function fetchAll(): Promise<Job[]> {
 
 export function useJobs() {
   const [jobs, setJobs] = useState<Job[]>([]);
-  const [pendingResequence, setPendingResequence] = useState<{
-    truckId: string;
-    changes: { id: string; date: string; endDate?: string }[];
-  } | null>(null);
 
   const refresh = () => {
     fetchAll().then(setJobs);
@@ -244,12 +334,24 @@ export function useJobs() {
       return;
     }
     const real = rowToJob(data as Row);
+    const reschedule = !!j.shiftFollowing;
     let merged: Job[] = [];
     setJobs((prev) => {
       merged = prev.map((x) => (x.id === tempId ? real : x));
+      if (reschedule)
+        merged = merged.map((x) =>
+          x.truckId === real.truckId && x.id !== real.id
+            ? { ...x, allowOverlap: false }
+            : x,
+        );
       return merged;
     });
-    await proposeResequence(merged, real.truckId, [], [real.id]);
+    const unpin = reschedule
+      ? merged
+          .filter((x) => x.truckId === real.truckId && x.id !== real.id)
+          .map((x) => ({ id: x.id, row: { allow_overlap: false } }))
+      : [];
+    await proposeResequence(merged, real.truckId, unpin, [real.id], !reschedule);
   };
 
 
@@ -299,29 +401,23 @@ export function useJobs() {
   };
 
   /**
-   * Instead of silently pushing following tasks, persist the user's change and
-   * surface a prompt asking whether the remaining tasks should each get their
-   * own day or stay on their current dates.
+   * Persist the user's change, then either leave the truck's remaining tasks on
+   * their current dates (`keepOthers`) or give each of them its own day.
    */
   const proposeResequence = async (
     nextJobs: Job[],
     truckId: string,
     batch: { id: string; row: Record<string, unknown> }[],
     pinnedIds?: string[],
+    keepOthers = true,
   ) => {
     if (batch.length) await persistBatch(batch);
     const changes = resequenceTruck(nextJobs, truckId, new Set(pinnedIds ?? []));
-    if (changes.length) setPendingResequence({ truckId, changes });
-  };
+    if (!changes.length) return;
 
-  const resolveResequence = async (apply: boolean) => {
-    const pending = pendingResequence;
-    setPendingResequence(null);
-    if (!pending) return;
-
-    if (!apply) {
-      // Keep the tasks where they are and stop asking again about them.
-      const ids = pending.changes.map((c) => c.id);
+    if (keepOthers) {
+      // Keep the tasks where they are and stop moving them in future passes.
+      const ids = changes.map((c) => c.id);
       setJobs((prev) =>
         prev.map((j) => (ids.includes(j.id) ? { ...j, allowOverlap: true } : j)),
       );
@@ -329,7 +425,7 @@ export function useJobs() {
       return;
     }
 
-    const map = new Map(pending.changes.map((c) => [c.id, c]));
+    const map = new Map(changes.map((c) => [c.id, c]));
     setJobs((prev) =>
       prev.map((j) => {
         const c = map.get(j.id);
@@ -337,12 +433,13 @@ export function useJobs() {
       }),
     );
     await persistBatch(
-      pending.changes.map((c) => ({
+      changes.map((c) => ({
         id: c.id,
         row: { date: c.date, end_date: c.endDate ?? null, allow_overlap: false },
       })),
     );
   };
+
 
 
 
@@ -378,10 +475,12 @@ export function useJobs() {
     finalUpdates = {
       ...updates,
       date: newDate ?? updates.date,
-      allowOverlap: manualScheduleChange
-        ? true
-        : (updates.allowOverlap ?? target.allowOverlap ?? false),
+      // The form's "keep these dates" checkbox wins; drag/quick moves still pin.
+      allowOverlap:
+        updates.allowOverlap ??
+        (manualScheduleChange ? true : (target.allowOverlap ?? false)),
     };
+
     const truckId = target.truckId;
 
     // When a paint task is moved to a different booth, keep every later paint
@@ -406,24 +505,49 @@ export function useJobs() {
       isPaint(j) &&
       j.date >= targetRef.date;
 
+    // "Reschedule following tasks" uses the pre-edit ordering below so neither
+    // moving the edited task nor changing its duration can reorder later work.
+    const reschedule = !!updates.shiftFollowing;
+
     const patched: Job[] = newJobs.map((j) => {
       if (j.id === id) return { ...j, ...finalUpdates };
       let next = j;
       if (isLaterPaint(j) && cascadeBay) next = { ...next, bay: cascadeBay };
       return next;
     });
-    setJobs(patched);
+    const followingChanges = reschedule
+      ? resequenceFollowingTruck(jobs, patched, id)
+      : [];
+    const followingMap = new Map(followingChanges.map((change) => [change.id, change]));
+    const resolvedJobs = patched.map((job) => {
+      const change = followingMap.get(job.id);
+      return change
+        ? { ...job, date: change.date, endDate: change.endDate, allowOverlap: false }
+        : job;
+    });
+    setJobs(resolvedJobs);
 
-    const batch: { id: string; row: Record<string, unknown> }[] = [
-      { id, row: jobToRow(finalUpdates) },
-    ];
+    const batchById = new Map<string, Record<string, unknown>>();
+    batchById.set(id, jobToRow(finalUpdates));
     for (const j of jobs) {
       if (j.id === id) continue;
       const row: Record<string, unknown> = {};
       if (isLaterPaint(j) && cascadeBay) row.bay = cascadeBay;
-      if (Object.keys(row).length > 0) batch.push({ id: j.id, row });
+      if (Object.keys(row).length > 0) batchById.set(j.id, row);
     }
-    await proposeResequence(patched, truckId, batch, [id]);
+    for (const change of followingChanges) {
+      batchById.set(change.id, {
+        ...(batchById.get(change.id) ?? {}),
+        date: change.date,
+        end_date: change.endDate ?? null,
+        allow_overlap: false,
+      });
+    }
+    await persistBatch(
+      Array.from(batchById, ([jobId, row]) => ({ id: jobId, row })),
+    );
+
+
 
   };
 
@@ -544,7 +668,5 @@ export function useJobs() {
     rescheduleFromJob,
     duplicateJob,
     reorderJobs,
-    pendingResequence,
-    resolveResequence,
   };
 }
