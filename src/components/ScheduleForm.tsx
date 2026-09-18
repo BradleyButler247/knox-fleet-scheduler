@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
+
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import {
@@ -61,7 +63,7 @@ export function pickBayForTask(
     return options.reduce((min, b) => (countOnDay(b) < countOnDay(min) ? b : min), options[0]);
   };
 
-  if (task === "Touch up") return "Paint Booth 2";
+  if (task === "Touch up") return "Bay 2";
   if (task === "Disassembly" || task === "Assembly") return "Bay 4";
   if (task === "Sandblast") return "Sandblast Area";
   if (task === "Sanding") return pickFromOptions(["Bay 1", "Bay 2", "Bay 3"]);
@@ -143,6 +145,13 @@ export function ScheduleForm({
   const [endDateState, setEndDateState] = useState(
     initialJob?.endDate ?? initialJob?.date ?? toDateKey(selectedDate),
   );
+  // Single-day task: start and end on the same date.
+  const [sameDate, setSameDate] = useState(
+    !(initialJob?.endDate && initialJob.endDate > initialJob.date),
+  );
+  // Push following tasks by the same number of days this task moves.
+  const [rescheduleFollowing, setRescheduleFollowing] = useState(false);
+
 
   const isMixer = workType === "Mixer 2 Color" || workType === "Mixer 3 Color";
 
@@ -202,7 +211,7 @@ export function ScheduleForm({
         if (isPaint) {
           chosenBay = paintBay;
         } else if (taskName === "Touch up") {
-          chosenBay = "Paint Booth 2";
+          chosenBay = "Bay 2";
         } else if (taskName === "Sanding") {
           chosenBay = sandBay;
         } else {
@@ -234,7 +243,8 @@ export function ScheduleForm({
       return;
     }
 
-    const endKey = endDateState && endDateState > dateKey ? endDateState : dateKey;
+    const endKey =
+      !sameDate && endDateState && endDateState > dateKey ? endDateState : dateKey;
 
     const payload = {
       truckId: normalizedTruck,
@@ -243,9 +253,13 @@ export function ScheduleForm({
       employee: employee.trim(),
       date: dateKey,
       endDate: endKey,
-      // A user-selected multi-day range is authoritative; keep the truck's
-      // other tasks on their existing dates even when the ranges overlap.
-      ...(endKey > dateKey ? { allowOverlap: true } : {}),
+      // Dates are always kept exactly as entered; the second checkbox decides
+      // whether following tasks shift by the same number of days.
+      allowOverlap: true,
+      keepOthers: true,
+      shiftFollowing: rescheduleFollowing,
+
+
       shift,
       ...(company.trim() ? { company: company.trim() } : {}),
       ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
@@ -435,33 +449,59 @@ export function ScheduleForm({
       </div>
 
       {!isMixer && (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="job-date">Start date</Label>
-            <Input
-              id="job-date"
-              type="date"
-              value={isEdit ? dateKeyState : toDateKey(selectedDate)}
-              disabled={!isEdit}
-              onChange={(e) => {
-                const v = e.target.value;
-                setDateKeyState(v);
-                if (v && endDateState < v) setEndDateState(v);
-              }}
-            />
+        <div className="space-y-3">
+          <div className={sameDate ? "" : "grid grid-cols-2 gap-3"}>
+            <div className="space-y-1.5">
+              <Label htmlFor="job-date">{sameDate ? "Date" : "Start date"}</Label>
+              <Input
+                id="job-date"
+                type="date"
+                value={isEdit ? dateKeyState : toDateKey(selectedDate)}
+                disabled={!isEdit}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setDateKeyState(v);
+                  if (v && endDateState < v) setEndDateState(v);
+                }}
+              />
+            </div>
+            {!sameDate && (
+              <div className="space-y-1.5">
+                <Label htmlFor="job-end-date">End date</Label>
+                <Input
+                  id="job-end-date"
+                  type="date"
+                  min={isEdit ? dateKeyState : toDateKey(selectedDate)}
+                  value={endDateState}
+                  onChange={(e) => setEndDateState(e.target.value)}
+                />
+              </div>
+            )}
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="job-end-date">End date</Label>
-            <Input
-              id="job-end-date"
-              type="date"
-              min={isEdit ? dateKeyState : toDateKey(selectedDate)}
-              value={endDateState}
-              onChange={(e) => setEndDateState(e.target.value)}
-            />
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={sameDate}
+                onCheckedChange={(v) => {
+                  setSameDate(!!v);
+                  if (v) setEndDateState(isEdit ? dateKeyState : toDateKey(selectedDate));
+                }}
+                className="mt-0.5"
+              />
+              <span>Keep start/end on same date</span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={rescheduleFollowing}
+                onCheckedChange={(v) => setRescheduleFollowing(!!v)}
+                className="mt-0.5"
+              />
+              <span>Reschedule following tasks</span>
+            </label>
           </div>
         </div>
       )}
+
 
       <Button type="submit" variant="default" className="w-full text-base font-normal tracking-wider">
         {isEdit

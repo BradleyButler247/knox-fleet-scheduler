@@ -340,6 +340,8 @@ type PendingJob = WeekItem & {
   date: string;
   endDate?: string;
   allowOverlap?: boolean;
+  /** Transient: push following tasks by the same number of business days. */
+  shiftFollowing?: boolean;
 };
 
 /**
@@ -355,25 +357,89 @@ function resequencePending(jobs: PendingJob[]): PendingJob[] {
   const changes = new Map<string, { date: string; endDate?: string }>();
   let cursor: Date | null = null;
 
+  // Tasks sharing a start date move together and stay on the same day.
+  const groups: PendingJob[][] = [];
   for (const { j } of order) {
-    const origStart = new Date(`${j.date}T00:00:00`);
-    const origEnd =
-      j.endDate && j.endDate > j.date ? new Date(`${j.endDate}T00:00:00`) : new Date(origStart);
-    const span = Math.max(0, businessDaysBetweenDates(origStart, origEnd));
+    const last = groups[groups.length - 1];
+    if (last && last[0].date === j.date) last.push(j);
+    else groups.push([j]);
+  }
 
-    let start = bumpToBusinessDay(origStart);
+  for (const group of groups) {
+    let start = bumpToBusinessDay(new Date(`${group[0].date}T00:00:00`));
     if (cursor && start.getTime() < cursor.getTime()) start = new Date(cursor);
-    const end = span > 0 ? addBusinessDaysTo(start, span) : new Date(start);
 
-    const nd = toDateKey(start);
-    const ne = toDateKey(end);
-    changes.set(j.id, { date: nd, endDate: ne !== nd ? ne : undefined });
-    cursor = nextBusinessDay(end);
+    let groupEnd = new Date(start);
+    for (const j of group) {
+      const origStart = new Date(`${j.date}T00:00:00`);
+      const origEnd =
+        j.endDate && j.endDate > j.date
+          ? new Date(`${j.endDate}T00:00:00`)
+          : new Date(origStart);
+      const span = Math.max(0, businessDaysBetweenDates(origStart, origEnd));
+      const end = span > 0 ? addBusinessDaysTo(start, span) : new Date(start);
+      if (end.getTime() > groupEnd.getTime()) groupEnd = new Date(end);
+
+      const nd = toDateKey(start);
+      const ne = toDateKey(end);
+      changes.set(j.id, { date: nd, endDate: ne !== nd ? ne : undefined });
+    }
+    cursor = nextBusinessDay(groupEnd);
   }
 
   return jobs.map((j) => {
     const c = changes.get(j.id);
     return c ? { ...j, date: c.date, endDate: c.endDate } : j;
+  });
+}
+
+function resequenceFollowingPending(
+  before: PendingJob[],
+  after: PendingJob[],
+  targetId: string,
+): PendingJob[] {
+  const target = after.find((job) => job.id === targetId);
+  if (!target || !before.some((job) => job.id === targetId)) return after;
+
+  const originalOrder = before
+    .map((job, index) => ({ job, index }))
+    .sort((a, b) =>
+      a.job.date === b.job.date
+        ? a.index - b.index
+        : a.job.date < b.job.date
+          ? -1
+          : 1,
+    );
+  const orderedTargetIndex = originalOrder.findIndex(({ job }) => job.id === targetId);
+  const following = originalOrder.slice(orderedTargetIndex + 1).map(({ job }) => job);
+  if (!following.length) return after;
+
+  const targetEnd = target.endDate && target.endDate > target.date ? target.endDate : target.date;
+  const cursor = nextBusinessDay(new Date(`${targetEnd}T00:00:00`));
+  const firstFollowingStart = bumpToBusinessDay(
+    new Date(`${following[0].date}T00:00:00`),
+  );
+  const offset = Math.max(0, businessDaysBetweenDates(firstFollowingStart, cursor));
+  const changes = new Map<string, { date: string; endDate?: string }>();
+
+  for (const job of following) {
+    const originalStart = new Date(`${job.date}T00:00:00`);
+    const originalEnd =
+      job.endDate && job.endDate > job.date
+        ? new Date(`${job.endDate}T00:00:00`)
+        : new Date(originalStart);
+    const shiftedStart = addBusinessDaysTo(originalStart, offset);
+    const shiftedEnd = addBusinessDaysTo(originalEnd, offset);
+    const date = toDateKey(shiftedStart);
+    const endKey = toDateKey(shiftedEnd);
+    changes.set(job.id, { date, endDate: endKey !== date ? endKey : undefined });
+  }
+
+  return after.map((job) => {
+    const change = changes.get(job.id);
+    return change
+      ? { ...job, date: change.date, endDate: change.endDate, allowOverlap: false }
+      : job;
   });
 }
 
@@ -389,14 +455,16 @@ function updatePendingJob(
     patch.endDate !== undefined &&
     patch.endDate !== (target?.endDate ?? target?.date);
   const manuallyChangedSchedule = manuallyMoved || manuallyChangedEnd;
+  const { shiftFollowing, ...cleanPatch } = patch;
   const resolvedPatch = manuallyChangedSchedule
-    ? { ...patch, allowOverlap: true }
-    : patch;
+    ? { ...cleanPatch, allowOverlap: !shiftFollowing }
+    : cleanPatch;
 
-  // A manually changed date range is authoritative and may overlap another
-  // task without moving any of the truck's other tasks.
+  // Anchor following work to its pre-edit order and original same-day groups.
   const apply = (next: PendingJob[]) =>
-    manuallyChangedSchedule
+    shiftFollowing
+      ? resequenceFollowingPending(jobs, next, id)
+      : manuallyChangedSchedule
       ? next
       : resequencePending(next);
 
@@ -478,6 +546,10 @@ function PendingJobForm({
   const [endDate, setEndDate] = useState(
     initial?.endDate ?? initial?.date ?? toDateKey(date),
   );
+  const [sameDate, setSameDate] = useState(
+    !(initial?.endDate && initial?.date && initial.endDate > initial.date),
+  );
+  const [rescheduleFollowing, setRescheduleFollowing] = useState(false);
   const isMixer = workType === "Mixer 2 Color" || workType === "Mixer 3 Color";
   const isEditing = !!initial;
   const resolvedWork = workType === "Other" ? workOther.trim() : workType;
@@ -493,29 +565,54 @@ function PendingJobForm({
         })}
       </p>
       {!isMixer && (
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <Label htmlFor="pending-start-date">Start date</Label>
-            <Input
-              id="pending-start-date"
-              type="date"
-              value={startDate}
-              onChange={(e) => {
-                const v = e.target.value;
-                setStartDate(v);
-                if (v && endDate < v) setEndDate(v);
-              }}
-            />
+        <div className="space-y-3">
+          <div className={sameDate ? "" : "grid grid-cols-2 gap-3"}>
+            <div className="space-y-1.5">
+              <Label htmlFor="pending-start-date">{sameDate ? "Date" : "Start date"}</Label>
+              <Input
+                id="pending-start-date"
+                type="date"
+                value={startDate}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setStartDate(v);
+                  if (v && endDate < v) setEndDate(v);
+                }}
+              />
+            </div>
+            {!sameDate && (
+              <div className="space-y-1.5">
+                <Label htmlFor="pending-end-date">End date</Label>
+                <Input
+                  id="pending-end-date"
+                  type="date"
+                  min={startDate}
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                />
+              </div>
+            )}
           </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="pending-end-date">End date</Label>
-            <Input
-              id="pending-end-date"
-              type="date"
-              min={startDate}
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-            />
+          <div className="space-y-2 rounded-md border border-border p-3">
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={sameDate}
+                onCheckedChange={(v) => {
+                  setSameDate(!!v);
+                  if (v) setEndDate(startDate);
+                }}
+                className="mt-0.5"
+              />
+              <span>Keep start/end on same date</span>
+            </label>
+            <label className="flex items-start gap-2 text-sm">
+              <Checkbox
+                checked={rescheduleFollowing}
+                onCheckedChange={(v) => setRescheduleFollowing(!!v)}
+                className="mt-0.5"
+              />
+              <span>Reschedule following tasks</span>
+            </label>
           </div>
         </div>
       )}
@@ -692,7 +789,9 @@ function PendingJobForm({
               employee: employee.trim(),
               shift,
               date: startDate,
-              endDate: endDate && endDate > startDate ? endDate : startDate,
+              endDate:
+                !sameDate && endDate && endDate > startDate ? endDate : startDate,
+              shiftFollowing: rescheduleFollowing,
               ...(workType === "Paint" && color.trim() ? { color: color.trim() } : {}),
             });
           }}
@@ -1440,7 +1539,7 @@ export function TruckSchedule({
   };
   const { getNotes: getJobNotes, addNote: addJobNote, updateNote: updateJobNote, deleteNote: deleteJobNote } = useJobNotes();
   const [companyFilter, setCompanyFilter] = useState<string>("__all__");
-  const [invoicedFilter, setInvoicedFilter] = useState<"__all__" | "invoiced" | "not_invoiced">("__all__");
+  const [invoicedFilter, setInvoicedFilter] = useState<"__all__" | "invoiced" | "not_invoiced" | "completed">("__all__");
 
   const [sortOrder, setSortOrder] = useState<"oldest" | "newest">("oldest");
 
@@ -1455,15 +1554,21 @@ export function TruckSchedule({
       .map(([truckId, list]) => {
         const sorted = list.sort((a, b) => a.date.localeCompare(b.date));
         const company = sorted.find((j) => (j.company ?? "").trim() !== "")?.company?.trim() ?? "";
-        return { truckId, jobs: sorted, company };
+        // Sort key: the truck's disassembly date, falling back to its first task.
+        const disassembly = sorted.find((j) =>
+          j.work.trim().toLowerCase().startsWith("disassemb"),
+        );
+        const sortDate = disassembly?.date ?? sorted[0]?.date ?? "";
+        return { truckId, jobs: sorted, company, sortDate };
       })
       .sort((a, b) => {
-        const ad = a.jobs[0]?.date ?? "";
-        const bd = b.jobs[0]?.date ?? "";
+        const ad = a.sortDate;
+        const bd = b.sortDate;
         if (ad !== bd) return sortOrder === "oldest" ? ad.localeCompare(bd) : bd.localeCompare(ad);
         return a.truckId.localeCompare(b.truckId);
       });
   }, [jobs, sortOrder]);
+
 
   const companies = useMemo(() => {
     const set = new Set<string>();
@@ -1480,9 +1585,10 @@ export function TruckSchedule({
       return false;
     }
     if (invoicedFilter !== "__all__") {
-      const invoiced = getStatus(g.truckId).invoiced;
-      if (invoicedFilter === "invoiced" && !invoiced) return false;
-      if (invoicedFilter === "not_invoiced" && invoiced) return false;
+      const status = getStatus(g.truckId);
+      if (invoicedFilter === "invoiced" && !status.invoiced) return false;
+      if (invoicedFilter === "not_invoiced" && status.invoiced) return false;
+      if (invoicedFilter === "completed" && !status.completed) return false;
     }
     const q = query.trim().toLowerCase();
     if (q && !g.truckId.toLowerCase().includes(q)) return false;
@@ -1543,6 +1649,7 @@ export function TruckSchedule({
             <SelectItem value="__all__">All trucks</SelectItem>
             <SelectItem value="invoiced">Invoiced</SelectItem>
             <SelectItem value="not_invoiced">Not invoiced</SelectItem>
+            <SelectItem value="completed">Completed</SelectItem>
           </SelectContent>
         </Select>
         <ToggleGroup
