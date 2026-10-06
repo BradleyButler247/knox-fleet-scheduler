@@ -63,18 +63,18 @@ function workColorClass(work: string) {
     case "Disassembly":
     case "Reassemble":
     case "Disassemble":
-      return "bg-yellow-500/20 text-yellow-700 dark:text-yellow-300 border-yellow-500/40";
+      return "bg-yellow-500/20 text-black dark:text-white font-semibold border-yellow-500/40";
     case "Sandblast":
-      return "bg-orange-500/20 text-orange-700 dark:text-orange-300 border-orange-500/40";
+      return "bg-orange-500/20 text-black dark:text-white font-semibold border-orange-500/40";
     case "Sanding":
-      return "bg-blue-500/20 text-blue-700 dark:text-blue-300 border-blue-500/40";
+      return "bg-blue-500/20 text-black dark:text-white font-semibold border-blue-500/40";
     case "Paint":
     case "Paint 1":
     case "Paint 2":
     case "Paint 3":
-      return "bg-green-500/20 text-green-700 dark:text-green-300 border-green-500/40";
+      return "bg-green-500/20 text-black dark:text-white font-semibold border-green-500/40";
     default:
-      return "bg-purple-500/20 text-purple-700 dark:text-purple-300 border-purple-500/40";
+      return "bg-purple-500/20 text-black dark:text-white font-semibold border-purple-500/40";
   }
 }
 
@@ -357,7 +357,7 @@ export function BayGrid({
                               {j.color ? ` — ${j.color}` : ""}
                             </Badge>
                             {j.employee ? (
-                              <span className={cn("flex items-center gap-1 text-[10px] text-muted-foreground min-w-0", j.completed ? "line-through opacity-70" : "")}>
+                              <span className={cn("flex items-center gap-1 text-[10px] text-black dark:text-white min-w-0", j.completed ? "line-through opacity-70" : "")}>
                                 <User className="h-2.5 w-2.5 shrink-0" />
                                 <span className="break-words whitespace-normal">{j.employee}</span>
                               </span>
